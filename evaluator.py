@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import yaml
 from pathlib import Path
+import time
 from metrics import compute_box_iou, compute_mask_iou, calculate_precision_recall
 
 def polygon_to_mask(polygon, width, height):
@@ -54,6 +55,7 @@ class GenericEvaluator:
         
         ious = []
         tps, fps, fns = 0, 0, 0
+        inference_times = []
         
         for img_path in images:
             img = cv2.imread(str(img_path))
@@ -75,7 +77,11 @@ class GenericEvaluator:
                             gt_boxes.append(box_to_absolute(parts[1:], w, h))
             
             # Run Prediction using generic model adapter
+            t0 = time.perf_counter()
             preds = self.model.predict(img, conf_threshold=conf_threshold)
+            t1 = time.perf_counter()
+            inference_times.append((t1 - t0) * 1000)
+            
             pred_masks = preds.get('masks', [])
             pred_boxes = preds.get('boxes', [])
 
@@ -118,16 +124,18 @@ class GenericEvaluator:
 
         mean_iou = np.mean(ious) if ious else 0.0
         precision, recall = calculate_precision_recall(tps, fps, fns)
+        avg_infer_time = np.mean(inference_times) if inference_times else 0.0
         
-        print("\n" + "="*40)
+        print("\n" + "="*45)
         print(f"📊 Evaluation Results (Threshold: IoU >= {iou_threshold})")
-        print("="*40)
-        print(f"  Mean IoU:  {mean_iou:.4f}")
-        print(f"  Precision: {precision:.4f}")
-        print(f"  Recall:    {recall:.4f}")
-        print("="*40)
+        print("="*45)
+        print(f"  Mean IoU:         {mean_iou:.4f}")
+        print(f"  Precision:        {precision:.4f}")
+        print(f"  Recall:           {recall:.4f}")
+        print(f"  Avg Infer Time:   {avg_infer_time:.1f} ms/img")
+        print("="*45)
         
-        return {'mIoU': mean_iou, 'precision': precision, 'recall': recall}
+        return {'mIoU': mean_iou, 'precision': precision, 'recall': recall, 'avg_infer_ms': avg_infer_time}
 
     def evaluate_single(self, source_path, save_dir=None):
         """

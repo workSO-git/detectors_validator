@@ -32,7 +32,8 @@ def main():
     if args.mode == 'dataset':
         evaluator.evaluate_dataset(args.source, iou_threshold=args.iou_thresh)
     elif args.mode == 'single':
-        evaluator.evaluate_single(args.source, save_dir=args.save_dir)
+        save_dir_abs = str(Path(args.save_dir).resolve()) if args.save_dir else None
+        evaluator.evaluate_single(args.source, save_dir=save_dir_abs)
 
 if __name__ == "__main__":
     main()
