@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Algorithm Evaluator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ════════════════════════ SIDEBAR ════════════════════════ -->
+  <aside id="sidebar">
+
+    <div class="sidebar-header">
+      <h1>📡 Algorithm Evaluator</h1>
+      <p><b>Перетягніть</b> фото або відео,<br>щоб почати оцінку алгоритмів.</p>
+    </div>
+
+    <!-- Upload button -->
+    <div class="sidebar-upload">
+      <button class="btn primary btn-full" id="btn-upload">📂 Завантажити файли</button>
+      <input type="file" id="file-input" multiple accept="image/*,video/*" style="display:none">
+    </div>
+
+    <!-- Progress -->
+    <div id="progress-container" style="display:none;">
+      <div class="progress-row">
+        <span>Обробка...</span>
+        <span id="progress-text">0 / 0</span>
+      </div>
+      <div class="progress-track">
+        <div id="progress-bar"></div>
+      </div>
+    </div>
+
+    <!-- File list -->
+    <div id="file-list"></div>
+
+    <!-- Settings panel -->
+    <div class="sidebar-settings">
+
+
+      <!-- GT labels path -->
+      <div>
+        <label>🏷️ Розмітка GT (dataset.yaml)</label>
+        <div style="display:flex; gap:6px; margin-top:4px;">
+          <input type="text" id="input-labels-dir" class="field" value="../seg_training/yolo_seg_dataset/dataset.yaml" placeholder="dataset.yaml" style="flex:1;">
+          <button class="btn btn-icon" id="btn-pick-labels-yaml" title="Вибрати dataset.yaml" style="border: 1px solid var(--border);">📄</button>
+        </div>
+        <p class="hint-text">Використовується для фото та відео (автоматичний пошук .txt)</p>
+      </div>
+
+    </div>
+
+  </aside>
+
+  <!-- ════════════════════════ MAIN ════════════════════════ -->
+  <div id="main">
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+
+      <span class="toolbar-file" id="current-name">Виберіть файл зліва</span>
+      <span class="metric-badge" id="metric-time"     style="display:none;" title="Час інференсу моделі (чим менше - тим краще, бажано < 50ms)">⏱️ 0ms</span>
+      <span class="metric-badge" id="metric-fps"      style="display:none;" title="Кадри за секунду (бажано > 24 FPS)">⚡ 0 FPS</span>
+      <span class="metric-badge" id="metric-polygons" style="display:none;" title="Кількість знайдених об'єктів (полігонів/боксів)">🟦 0 об'єктів</span>
+
+      <div class="toolbar-spacer"></div>
+
+      <!-- View filter -->
+      <div class="pill-group" id="filterGroup">
+        <button class="pill-btn active" data-value="all">👁 Всі</button>
+        <button class="pill-btn"       data-value="masks">Маски</button>
+        <button class="pill-btn"       data-value="boxes">Бокси</button>
+      </div>
+
+      <div class="toolbar-sep"></div>
+
+      <!-- View mode -->
+      <div class="pill-group" id="modeGroup">
+        <button class="pill-btn"        data-value="original">Оригінал</button>
+        <button class="pill-btn"        data-value="segmented">Розмітка</button>
+        <button class="pill-btn active" data-value="side">Поруч</button>
+      </div>
+
+      <div class="toolbar-sep"></div>
+
+      <span style="font-size:11px; color:var(--muted); white-space:nowrap;">Space — змінити вид</span>
+
+    </div>
+
+    <!-- Drop zone -->
+    <div id="drop-zone">
+      <div>
+        <div style="font-size:44px; margin-bottom:10px;">📥</div>
+        <div>Перетягніть фото або відео сюди</div>
+      </div>
+    </div>
+
+    <!-- Workspace -->
+    <div id="workspace">
+      <div id="img-area">
+
+        <!-- Single image view -->
+        <div id="wrapper">
+          <img id="img-single" src="" alt="View">
+        </div>
+
+        <!-- Side-by-side view -->
+        <div id="wrapper-side">
+          <div class="side-panel">
+            <div class="side-panel-label">Оригінал</div>
+            <img id="img-orig-side">
+          </div>
+          <div class="side-panel">
+            <div class="side-panel-label">Результат</div>
+            <img id="img-seg-side">
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Photo metrics panel (moved below image) -->
+      <div id="photo-metrics-panel" style="display:none; margin: 15px; padding: 15px; background: rgba(88,166,255,0.05); border: 1px solid rgba(88,166,255,0.2); border-radius: 8px;">
+        <div class="pm-header" style="margin-bottom: 15px;">
+          <span class="pm-title" style="font-size: 14px;">📊 Метрики зображення</span>
+          <span id="pm-gt-badge" class="gt-badge gt-yes">з GT</span>
+        </div>
+        <div class="lm-grid" style="gap: 15px;">
+          <div class="lm-cell" title="Intersection over Union: наскільки точно співпали маски. Значення від 0 до 1 (бажано > 0.5)">
+            <span class="lm-cell-label">IoU</span>
+            <span class="lm-cell-value" id="pm-iou">—</span>
+          </div>
+          <div class="lm-cell" title="Precision (Точність): частка правильних передбачень серед усіх виявлених. Від 0 до 1 (бажано > 0.7)">
+            <span class="lm-cell-label">Prec.</span>
+            <span class="lm-cell-value" id="pm-precision">—</span>
+          </div>
+          <div class="lm-cell" title="Recall (Повнота): частка знайдених об'єктів серед усіх існуючих. Від 0 до 1 (бажано > 0.7)">
+            <span class="lm-cell-label">Recall</span>
+            <span class="lm-cell-value" id="pm-recall">—</span>
+          </div>
+          <div class="lm-cell" title="F1-Score: гармонійне середнє між Precision та Recall. Від 0 до 1 (бажано > 0.7)">
+            <span class="lm-cell-label">F1</span>
+            <span class="lm-cell-value" id="pm-f1">—</span>
+          </div>
+        </div>
+        <div class="pm-footer" style="margin-top: 15px;">
+          <span id="pm-counts"></span>
+        </div>
+      </div>
+
+      <!-- Video scrubber + live metrics -->
+      <div id="video-scrubber-container" style="display:none;">
+
+        <div class="scrubber-row">
+          <button id="btn-play-pause" class="play-btn" title="Пауза / Відтворення">⏸️</button>
+          <span id="video-time" class="video-time">0 / 0</span>
+          <input type="range" id="video-slider" class="scrubber-input" min="0" max="100" value="0">
+        </div>
+
+        <!-- Live Metrics -->
+        <div id="live-metrics-panel">
+          <div class="lm-header">
+            <span class="lm-title">📊 Live Metrics <span class="lm-window">(останні 50 кадрів)</span></span>
+            <span id="lm-status" class="lm-status">Без GT</span>
+          </div>
+          <div class="lm-grid">
+            <div class="lm-cell" title="Середній IoU за останні 50 кадрів (бажано > 0.5)">
+              <span class="lm-cell-label">IoU avg</span>
+              <span class="lm-cell-value" id="lm-iou-avg">—</span>
+            </div>
+            <div class="lm-cell" title="Мінімальний IoU за останні 50 кадрів">
+              <span class="lm-cell-label">IoU min</span>
+              <span class="lm-cell-value" id="lm-iou-min">—</span>
+            </div>
+            <div class="lm-cell" title="Temporal Jitter: середнє зміщення центрів об'єктів між кадрами в пікселях (бажано < 5px)">
+              <span class="lm-cell-label">Jitter px</span>
+              <span class="lm-cell-value" id="lm-jitter">—</span>
+            </div>
+            <div class="lm-cell" title="Flicker Rate: відсоток кадрів, де об'єкт зникає або з'являється (бажано < 5%)">
+              <span class="lm-cell-label">Flicker %</span>
+              <span class="lm-cell-value" id="lm-flicker">—</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /workspace -->
+
+  </div><!-- /main -->
+
+  <script src="app.js"></script>
+</body>
+</html>

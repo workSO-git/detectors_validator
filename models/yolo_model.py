@@ -48,15 +48,18 @@ class YoloModel(BaseModel):
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
             
-        self.model.predict(
+        results = self.model.predict(
             source=str(image_path), 
-            save=bool(save_dir), 
-            project=save_dir, 
-            name='result', 
-            exist_ok=True, 
+            save=False, 
             show=False
         )
+        
         if save_dir:
-            print(f"✅ Results saved to {save_dir}")
+            for res in results:
+                plotted_img = res.plot()
+                file_name = Path(res.path).name
+                save_path = Path(save_dir) / file_name
+                cv2.imwrite(str(save_path), plotted_img)
+                print(f"✅ Results saved to {save_path}")
         else:
             print("✅ Inference completed.")
