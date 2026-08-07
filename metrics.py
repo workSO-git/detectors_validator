@@ -39,8 +39,11 @@ def calculate_precision_recall(tp, fp, fn):
     """
     Calculate Precision and Recall.
     """
+    if tp == 0 and fp == 0 and fn == 0:
+        return 1.0, 1.0
+        
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 1.0
     return precision, recall
 
 def calculate_f1_score(precision, recall):

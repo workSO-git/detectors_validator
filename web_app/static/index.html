@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="uk">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Algorithm Evaluator</title>
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
   <!-- ════════════════════════ SIDEBAR ════════════════════════ -->
@@ -33,20 +35,40 @@
       </div>
     </div>
 
+    <!-- ═══ DATASET METRICS PANEL — moved back to workspace below image ═══ -->
+
     <!-- File list -->
     <div id="file-list"></div>
 
     <!-- Settings panel -->
     <div class="sidebar-settings">
 
+      <!-- Metrics-only mode -->
+      <div class="metrics-only-row" id="metrics-only-row">
+        <label class="toggle-label" for="chk-metrics-only">
+          <span>📊 Тільки метрики</span>
+          <span class="hint-text" style="display:block; margin-top:2px;">Без зображень — для великих датасетів (5000+
+            фото)</span>
+        </label>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:5px;">
+          <div class="toggle-switch">
+            <input type="checkbox" id="chk-metrics-only">
+            <label class="toggle-track" for="chk-metrics-only"></label>
+          </div>
+          <span id="metrics-only-lock-badge" style="display:none;">🔒 Активно</span>
+        </div>
+      </div>
 
       <!-- GT labels path -->
       <div>
-        <label>🏷️ Розмітка GT (dataset.yaml)</label>
+        <label>🏷️ Розмітка GT (.yaml або .json)</label>
         <div style="display:flex; gap:6px; margin-top:4px;">
-          <input type="text" id="input-labels-dir" class="field" value="../seg_training/yolo_seg_dataset/dataset.yaml" placeholder="dataset.yaml" style="flex:1;">
-          <button class="btn btn-icon" id="btn-pick-labels-yaml" title="Вибрати dataset.yaml" style="border: 1px solid var(--border);">📄</button>
+          <input type="text" id="input-labels-dir" class="field" value="../seg_training/yolo_seg_dataset/dataset.yaml"
+            placeholder="Шлях до .yaml або .json" style="flex:1;">
+          <button class="btn btn-icon" id="btn-pick-labels-yaml" title="Вибрати файл розмітки"
+            style="border: 1px solid var(--border);">📄</button>
         </div>
+
         <p class="hint-text">Використовується для фото та відео (автоматичний пошук .txt)</p>
       </div>
 
@@ -61,25 +83,28 @@
     <div class="toolbar">
 
       <span class="toolbar-file" id="current-name">Виберіть файл зліва</span>
-      <span class="metric-badge" id="metric-time"     style="display:none;" title="Час інференсу моделі (чим менше - тим краще, бажано < 50ms)">⏱️ 0ms</span>
-      <span class="metric-badge" id="metric-fps"      style="display:none;" title="Кадри за секунду (бажано > 24 FPS)">⚡ 0 FPS</span>
-      <span class="metric-badge" id="metric-polygons" style="display:none;" title="Кількість знайдених об'єктів (полігонів/боксів)">🟦 0 об'єктів</span>
+      <span class="metric-badge" id="metric-time" style="display:none;"
+        title="Час інференсу моделі (чим менше - тим краще, бажано < 50ms)">⏱️ 0ms</span>
+      <span class="metric-badge" id="metric-fps" style="display:none;" title="Кадри за секунду (бажано > 24 FPS)">⚡ 0
+        FPS</span>
+      <span class="metric-badge" id="metric-polygons" style="display:none;"
+        title="Кількість знайдених об'єктів (полігонів/боксів)">🟦 0 об'єктів</span>
 
       <div class="toolbar-spacer"></div>
 
       <!-- View filter -->
       <div class="pill-group" id="filterGroup">
         <button class="pill-btn active" data-value="all">👁 Всі</button>
-        <button class="pill-btn"       data-value="masks">Маски</button>
-        <button class="pill-btn"       data-value="boxes">Бокси</button>
+        <button class="pill-btn" data-value="masks">Маски</button>
+        <button class="pill-btn" data-value="boxes">Бокси</button>
       </div>
 
       <div class="toolbar-sep"></div>
 
       <!-- View mode -->
       <div class="pill-group" id="modeGroup">
-        <button class="pill-btn"        data-value="original">Оригінал</button>
-        <button class="pill-btn"        data-value="segmented">Розмітка</button>
+        <button class="pill-btn" data-value="original">Оригінал</button>
+        <button class="pill-btn" data-value="segmented">Розмітка</button>
         <button class="pill-btn active" data-value="side">Поруч</button>
       </div>
 
@@ -101,6 +126,14 @@
     <div id="workspace">
       <div id="img-area">
 
+        <!-- Metrics-only placeholder -->
+        <div id="metrics-only-placeholder" style="display:none;">
+          <div style="font-size:52px; margin-bottom:16px;">📊</div>
+          <div style="font-size:16px; font-weight:600; color:var(--text); margin-bottom:8px;">Режим «Тільки метрики»
+          </div>
+          <div style="font-size:13px; color:var(--muted);">Зображення не завантажуються у пам'ять.</div>
+        </div>
+
         <!-- Single image view -->
         <div id="wrapper">
           <img id="img-single" src="" alt="View">
@@ -120,36 +153,57 @@
 
       </div>
 
-      <!-- Photo metrics panel (moved below image) -->
-      <div id="photo-metrics-panel" style="display:none; margin: 15px; padding: 15px; background: rgba(88,166,255,0.05); border: 1px solid rgba(88,166,255,0.2); border-radius: 8px;">
-        <div class="pm-header" style="margin-bottom: 15px;">
-          <span class="pm-title" style="font-size: 14px;">📊 Метрики зображення</span>
+      <!-- Dataset metrics panel (global aggregated, below image) -->
+      <div id="photo-metrics-panel"
+        style="display:none; margin: 15px; padding: 15px; background: rgba(88,166,255,0.05); border: 1px solid rgba(88,166,255,0.2); border-radius: 8px;">
+        <div class="pm-header" style="margin-bottom: 12px;">
+          <span class="pm-title" style="font-size: 14px;">📊 Метрики датасету</span>
           <span id="pm-gt-badge" class="gt-badge gt-yes">з GT</span>
         </div>
+
+        <!-- Algorithm speed -->
+        <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(88,166,255,0.15);">
+          <div
+            style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+            ⚡ Швидкість алгоритму</div>
+          <div style="display: flex; gap: 12px;">
+            <div class="lm-cell" title="Середній чистий час інференсу по всіх фото">
+              <span class="lm-cell-label">Avg (всі)</span>
+              <span class="lm-cell-value" id="pm-avg-time">—</span>
+            </div>
+            <div class="lm-cell" title="Середній час останніх 20% фото — без прогріву">
+              <span class="lm-cell-label">Avg (20%)</span>
+              <span class="lm-cell-value" id="pm-avg-time-20" style="color: var(--primary);">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quality metrics -->
+        <div
+          style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+          🎯 Якість (avg по датасету)</div>
         <div class="lm-grid" style="gap: 15px;">
-          <div class="lm-cell" title="Intersection over Union: наскільки точно співпали маски. Значення від 0 до 1 (бажано > 0.5)">
-            <span class="lm-cell-label">IoU</span>
+          <div class="lm-cell" title="Середній IoU по всіх фото з GT">
+            <span class="lm-cell-label">IoU avg</span>
             <span class="lm-cell-value" id="pm-iou">—</span>
           </div>
-          <div class="lm-cell" title="Precision (Точність): частка правильних передбачень серед усіх виявлених. Від 0 до 1 (бажано > 0.7)">
+          <div class="lm-cell" title="Середня Precision по всіх фото з GT">
             <span class="lm-cell-label">Prec.</span>
             <span class="lm-cell-value" id="pm-precision">—</span>
           </div>
-          <div class="lm-cell" title="Recall (Повнота): частка знайдених об'єктів серед усіх існуючих. Від 0 до 1 (бажано > 0.7)">
+          <div class="lm-cell" title="Середній Recall по всіх фото з GT">
             <span class="lm-cell-label">Recall</span>
             <span class="lm-cell-value" id="pm-recall">—</span>
           </div>
-          <div class="lm-cell" title="F1-Score: гармонійне середнє між Precision та Recall. Від 0 до 1 (бажано > 0.7)">
-            <span class="lm-cell-label">F1</span>
+          <div class="lm-cell" title="Середній F1 по всіх фото з GT">
+            <span class="lm-cell-label">F1 avg</span>
             <span class="lm-cell-value" id="pm-f1">—</span>
           </div>
         </div>
-        <div class="pm-footer" style="margin-top: 15px;">
+        <div class="pm-footer" style="margin-top: 12px;">
           <span id="pm-counts"></span>
         </div>
       </div>
-
-      <!-- Video scrubber + live metrics -->
       <div id="video-scrubber-container" style="display:none;">
 
         <div class="scrubber-row">
@@ -173,7 +227,8 @@
               <span class="lm-cell-label">IoU min</span>
               <span class="lm-cell-value" id="lm-iou-min">—</span>
             </div>
-            <div class="lm-cell" title="Temporal Jitter: середнє зміщення центрів об'єктів між кадрами в пікселях (бажано < 5px)">
+            <div class="lm-cell"
+              title="Temporal Jitter: середнє зміщення центрів об'єктів між кадрами в пікселях (бажано < 5px)">
               <span class="lm-cell-label">Jitter px</span>
               <span class="lm-cell-value" id="lm-jitter">—</span>
             </div>
@@ -189,6 +244,8 @@
 
   </div><!-- /main -->
 
-  <script src="app.js"></script>
+  <!-- v3: cache-bust to force fresh JS load -->
+  <script src="app.js?v=5"></script>
 </body>
+
 </html>

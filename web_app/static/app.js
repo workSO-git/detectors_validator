@@ -1,58 +1,66 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     // ── DOM refs ─────────────────────────────────────────────────────────────
-    const fileInput       = document.getElementById('file-input');
-    const btnUpload       = document.getElementById('btn-upload');
-    const fileList        = document.getElementById('file-list');
+    const fileInput = document.getElementById('file-input');
+    const btnUpload = document.getElementById('btn-upload');
+    const fileList = document.getElementById('file-list');
 
-    const wrapper         = document.getElementById('wrapper');
-    const wrapperSide     = document.getElementById('wrapper-side');
-    const imgSingle       = document.getElementById('img-single');
-    const imgOrigSide     = document.getElementById('img-orig-side');
-    const imgSegSide      = document.getElementById('img-seg-side');
+    const wrapper = document.getElementById('wrapper');
+    const wrapperSide = document.getElementById('wrapper-side');
+    const imgSingle = document.getElementById('img-single');
+    const imgOrigSide = document.getElementById('img-orig-side');
+    const imgSegSide = document.getElementById('img-seg-side');
 
-    const currentName     = document.getElementById('current-name');
-    const metricTime      = document.getElementById('metric-time');
-    const metricFps       = document.getElementById('metric-fps');
-    const metricPolygons  = document.getElementById('metric-polygons');
+    const currentName = document.getElementById('current-name');
+    const metricTime = document.getElementById('metric-time');
+    const metricFps = document.getElementById('metric-fps');
+    const metricPolygons = document.getElementById('metric-polygons');
 
-    const inputLabelsDir  = document.getElementById('input-labels-dir');
+    const inputLabelsDir = document.getElementById('input-labels-dir');
     const btnPickLabelsYaml = document.getElementById('btn-pick-labels-yaml');
-    const photoMetrics    = document.getElementById('photo-metrics-panel');
-    const pmGtBadge       = document.getElementById('pm-gt-badge');
-    const pmIou           = document.getElementById('pm-iou');
-    const pmPrec          = document.getElementById('pm-precision');
-    const pmRecall        = document.getElementById('pm-recall');
-    const pmF1            = document.getElementById('pm-f1');
-    const pmCounts        = document.getElementById('pm-counts');
+    const photoMetrics = document.getElementById('photo-metrics-panel');
+    // Dataset metrics panel elements
+    const pmGtBadge   = document.getElementById('pm-gt-badge');
+    const pmAvgTime   = document.getElementById('pm-avg-time');
+    const pmAvgTime20 = document.getElementById('pm-avg-time-20');
+    const pmIou       = document.getElementById('pm-iou');
+    const pmPrec      = document.getElementById('pm-precision');
+    const pmRecall    = document.getElementById('pm-recall');
+    const pmF1        = document.getElementById('pm-f1');
+    const pmCounts    = document.getElementById('pm-counts');
 
     const videoScrubberContainer = document.getElementById('video-scrubber-container');
-    const btnPlayPause    = document.getElementById('btn-play-pause');
-    const videoTimeEl     = document.getElementById('video-time');
-    const videoSlider     = document.getElementById('video-slider');
+    const btnPlayPause = document.getElementById('btn-play-pause');
+    const videoTimeEl = document.getElementById('video-time');
+    const videoSlider = document.getElementById('video-slider');
 
-    const lmStatus        = document.getElementById('lm-status');
-    const lmIouAvg        = document.getElementById('lm-iou-avg');
-    const lmIouMin        = document.getElementById('lm-iou-min');
-    const lmJitter        = document.getElementById('lm-jitter');
-    const lmFlicker       = document.getElementById('lm-flicker');
+    const lmStatus = document.getElementById('lm-status');
+    const lmIouAvg = document.getElementById('lm-iou-avg');
+    const lmIouMin = document.getElementById('lm-iou-min');
+    const lmJitter = document.getElementById('lm-jitter');
+    const lmFlicker = document.getElementById('lm-flicker');
 
     const progressContainer = document.getElementById('progress-container');
-    const progressBar       = document.getElementById('progress-bar');
-    const progressText      = document.getElementById('progress-text');
-    const imgArea           = document.getElementById('img-area');
-    const dropZone          = document.getElementById('drop-zone');
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const imgArea = document.getElementById('img-area');
+    const dropZone = document.getElementById('drop-zone');
+    const chkMetricsOnly      = document.getElementById('chk-metrics-only');
+    const metricsOnlyRow      = document.getElementById('metrics-only-row');
+    const metricsOnlyLockBadge = document.getElementById('metrics-only-lock-badge');
+    const metricsOnlyPlaceholder = document.getElementById('metrics-only-placeholder');
 
     // ── State ────────────────────────────────────────────────────────────────
-    let filesData        = [];
-    let currentFileId    = null;
-    let currentFilter    = 'all';
-    let currentViewMode  = 'side';   // default: side-by-side
-    let currentWs        = null;
-    let totalFrames      = 0;
+    let filesData = [];
+    let currentFileId = null;
+    let currentFilter = 'all';
+    let currentViewMode = 'side';   // default: side-by-side
+    let currentWs = null;
+    let totalFrames = 0;
     let isDraggingSlider = false;
-    let isVideoPaused    = true;     // default: paused
-    let isProcessing     = false;
+    let isVideoPaused = true;     // default: paused
+    let isProcessing = false;
+    let metricsOnlyMode = false;
 
     // ── Pill toggle groups ───────────────────────────────────────────────────
     function setupPillGroup(groupId, onSelect) {
@@ -69,7 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Set initial active states in the DOM
     setPillActive('filterGroup', currentFilter);
-    setPillActive('modeGroup',   currentViewMode);
+    setPillActive('modeGroup', currentViewMode);
 
     setupPillGroup('filterGroup', (val) => {
         currentFilter = val;
@@ -105,13 +113,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Folder / File picker ───────────────────────────────────────────────
     async function pickFolder() {
-        const res  = await fetch('/api/pick_folder');
+        const res = await fetch('/api/pick_folder');
         const data = await res.json();
         return data.path || '';
     }
 
     async function pickFile() {
-        const res  = await fetch('/api/pick_file');
+        const res = await fetch('/api/pick_file');
         const data = await res.json();
         return data.path || '';
     }
@@ -141,16 +149,36 @@ document.addEventListener('DOMContentLoaded', () => {
     btnPickLabelsYaml.addEventListener('click', async () => onLabelsPathPicked(await pickFile()));
     inputLabelsDir.addEventListener('change', onLabelsPathChanged);
 
+    // ── Metrics-Only toggle ──────────────────────────────────────────────────
+    chkMetricsOnly.addEventListener('change', () => {
+        metricsOnlyMode = chkMetricsOnly.checked;
+    });
+
+    function lockToggle() {
+        chkMetricsOnly.disabled = true;
+        metricsOnlyRow.classList.add('is-locked');
+        if (metricsOnlyLockBadge) {
+            metricsOnlyLockBadge.style.display = 'inline';
+            metricsOnlyLockBadge.textContent = metricsOnlyMode ? '🔒 Активно' : '🔒 Режим обрано';
+        }
+    }
+
+    function unlockToggle() {
+        chkMetricsOnly.disabled = false;
+        metricsOnlyRow.classList.remove('is-locked');
+        if (metricsOnlyLockBadge) metricsOnlyLockBadge.style.display = 'none';
+    }
+
     // ── File Upload & Drag'n'Drop ────────────────────────────────────────────
     btnUpload.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', e => handleFiles(e.target.files));
 
     // Prevent browser from opening dropped files natively
-    window.addEventListener('dragover',  (e) => e.preventDefault(), false);
-    window.addEventListener('drop',      (e) => e.preventDefault(), false);
+    window.addEventListener('dragover', (e) => e.preventDefault(), false);
+    window.addEventListener('drop', (e) => e.preventDefault(), false);
 
     // Visual drop zone
-    document.addEventListener('dragover',  () => dropZone.classList.add('active'));
+    document.addEventListener('dragover', () => dropZone.classList.add('active'));
     document.addEventListener('dragleave', (e) => {
         if (!e.relatedTarget || e.relatedTarget === document.documentElement) {
             dropZone.classList.remove('active');
@@ -164,22 +192,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function handleFiles(files) {
         for (let i = 0; i < files.length; i++) {
-            const file  = files[i];
+            const file = files[i];
             const isVid = file.type.startsWith('video/');
             if (!file.type.startsWith('image/') && !isVid) continue;
 
-            const id          = Date.now() + '_' + i;
-            const originalB64 = isVid ? null : await readAsDataURL(file);
+            const id = Date.now() + '_' + i;
+            // In metrics-only mode skip base64 reading to save RAM
+            const originalB64 = (isVid || metricsOnlyMode) ? null : await readAsDataURL(file);
 
             filesData.push({
                 id, file, isVideo: isVid,
                 serverPath: null, originalB64,
                 segmentedB64: null, segmentedMasksB64: null, segmentedBoxesB64: null,
-                timeMs: 0, polygons: 0, processed: false,
-                metrics: null   // filled after processing if GT available
+                timeMs: null, polygons: 0, processed: false,
+                metrics: null,
+                metricsOnly: metricsOnlyMode  // remember mode at the time of upload
             });
             addToSidebar(id, file.name, isVid);
         }
+        // Lock the toggle once processing starts
+        lockToggle();
         processQueue();
     }
 
@@ -217,14 +249,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             try {
                 if (filesData[i].isVideo) {
-                    const res  = await fetch('/api/upload_video?filename=' + encodeURIComponent(filesData[i].file.name), {
+                    const res = await fetch('/api/upload_video?filename=' + encodeURIComponent(filesData[i].file.name), {
                         method: 'POST', body: filesData[i].file,
                         headers: { 'Content-Type': filesData[i].file.type || 'application/octet-stream' }
                     });
                     const data = await res.json();
                     if (data.success) {
                         filesData[i].serverPath = data.path;
-                        filesData[i].processed  = true;
+                        filesData[i].processed = true;
                         markDone(filesData[i].id, '🎬');
                         if (currentFileId === filesData[i].id) renderMainView();
                     }
@@ -233,19 +265,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     fd2.append('file', filesData[i].file);
                     const labelsDir = inputLabelsDir.value.trim();
                     if (labelsDir) fd2.append('labels_dir', labelsDir);
-                    const res  = await fetch('/api/process', { method: 'POST', body: fd2 });
+                    // Metrics-only: tell server to skip encoding images
+                    if (filesData[i].metricsOnly) fd2.append('no_images', 'true');
+                    const res = await fetch('/api/process', { method: 'POST', body: fd2 });
                     const data = await res.json();
                     if (data.success) {
                         Object.assign(filesData[i], {
-                            segmentedB64:      data.image,
-                            segmentedMasksB64: data.image_masks,
-                            segmentedBoxesB64: data.image_boxes,
-                            timeMs:            data.time_ms,
-                            polygons:          data.polygons,
-                            processed:         true,
-                            metrics:           data.metrics || null
+                            // Only store images if NOT metrics-only (saves RAM)
+                            segmentedB64:      filesData[i].metricsOnly ? null : data.image,
+                            segmentedMasksB64: filesData[i].metricsOnly ? null : data.image_masks,
+                            segmentedBoxesB64: filesData[i].metricsOnly ? null : data.image_boxes,
+                            timeMs:   data.time_ms,
+                            polygons: data.polygons,
+                            processed: true,
+                            metrics: data.metrics || null
                         });
-                        markDone(filesData[i].id, '✅');
+                        
+                        let icon = filesData[i].metricsOnly ? '📊' : '✅';
+                        let titleText = 'Оброблено успішно';
+                        
+                        markDone(filesData[i].id, icon, titleText);
+                        updateBatchMetrics();
                         if (currentFileId === filesData[i].id) renderMainView();
                     }
                 }
@@ -258,19 +298,78 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgress(filesData.length, filesData.length);
         setTimeout(() => { progressContainer.style.display = 'none'; }, 1500);
         isProcessing = false;
+        // Toggle remains locked for the entire session — mode was chosen at upload time
     }
 
-    function markDone(id, icon) {
+    function markDone(id, icon, titleText = '') {
         const el = document.getElementById(`file-${id}`);
         if (!el) return;
         el.classList.add('processed');
         const s = el.querySelector('.file-ok');
-        if (s) s.textContent = icon;
+        if (s) {
+            s.textContent = icon;
+            if (titleText) s.title = titleText;
+        }
     }
 
     function updateProgress(done, total) {
         progressText.textContent = `${done} / ${total}`;
-        progressBar.style.width  = `${(done / total) * 100}%`;
+        progressBar.style.width = `${(done / total) * 100}%`;
+    }
+
+    // ── Dataset Metrics (aggregated over all processed photos) ───────────────
+    function updateBatchMetrics() {
+        const photos = filesData.filter(f => !f.isVideo && f.processed);
+        if (photos.length === 0) {
+            photoMetrics.style.display = 'none';
+            return;
+        }
+
+        photoMetrics.style.display = 'block';
+
+        // ── Algorithm speed (pure inference time, no extra overhead) ──────────
+        const times = photos
+            .filter(f => f.timeMs != null && !isNaN(f.timeMs))
+            .map(f => Number(f.timeMs));
+        if (times.length > 0) {
+            const avgAll = times.reduce((a, b) => a + b, 0) / times.length;
+            const count20 = Math.max(1, Math.floor(times.length * 0.2));
+            const avg20   = times.slice(-count20).reduce((a, b) => a + b, 0) / count20;
+            if (pmAvgTime)   pmAvgTime.textContent   = `${avgAll.toFixed(2)} ms`;
+            if (pmAvgTime20) pmAvgTime20.textContent = `${avg20.toFixed(2)} ms`;
+        } else {
+            if (pmAvgTime)   pmAvgTime.textContent   = '—';
+            if (pmAvgTime20) pmAvgTime20.textContent = '—';
+        }
+
+        // ── Quality metrics (only photos that have GT) ────────────────────────
+        const withGt = photos.filter(f => f.metrics && f.metrics.has_gt);
+        if (withGt.length > 0) {
+            const avg = key => withGt.reduce((s, f) => s + f.metrics[key], 0) / withGt.length;
+            if (pmIou)    pmIou.textContent    = avg('iou').toFixed(3);
+            if (pmPrec)   pmPrec.textContent   = avg('precision').toFixed(3);
+            if (pmRecall) pmRecall.textContent = avg('recall').toFixed(3);
+            if (pmF1)     pmF1.textContent     = avg('f1').toFixed(3);
+            if (pmGtBadge) {
+                pmGtBadge.textContent = `✅ GT: ${withGt.length} / ${photos.length}`;
+                pmGtBadge.className   = 'gt-badge gt-yes';
+            }
+            if (pmCounts) {
+                const totalPred = withGt.reduce((s, f) => s + f.metrics.objects, 0);
+                const totalGt   = withGt.reduce((s, f) => s + f.metrics.gt_count, 0);
+                pmCounts.textContent = `Pred: ${totalPred}  |  GT: ${totalGt}`;
+            }
+        } else {
+            if (pmIou)    pmIou.textContent    = '—';
+            if (pmPrec)   pmPrec.textContent   = '—';
+            if (pmRecall) pmRecall.textContent = '—';
+            if (pmF1)     pmF1.textContent     = '—';
+            if (pmGtBadge) {
+                pmGtBadge.textContent = '❌ без GT';
+                pmGtBadge.className   = 'gt-badge gt-no';
+            }
+            if (pmCounts) pmCounts.textContent = 'GT-файли не знайдено';
+        }
     }
 
     // ── Re-evaluate photo metrics with a new labels dir ──────────────────
@@ -281,17 +380,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const fd2 = new FormData();
             fd2.append('file', fdEntry.file);
             fd2.append('labels_dir', labelsDir);
-            const res  = await fetch('/api/process', { method: 'POST', body: fd2 });
+            const res = await fetch('/api/process', { method: 'POST', body: fd2 });
             const data = await res.json();
             if (data.success) {
                 fdEntry.metrics = data.metrics || null;
+                updateBatchMetrics();
             }
         } catch (e) { console.error(e); }
     }
 
     // ── Video scrubber ───────────────────────────────────────────────────────
     videoSlider.addEventListener('mousedown', () => { isDraggingSlider = true; });
-    videoSlider.addEventListener('mouseup',   () => { isDraggingSlider = false; });
+    videoSlider.addEventListener('mouseup', () => { isDraggingSlider = false; });
     videoSlider.addEventListener('input', (e) => {
         const val = parseInt(e.target.value);
         videoTimeEl.textContent = `${val} / ${totalFrames}`;
@@ -310,10 +410,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Live stream ──────────────────────────────────────────────────────────
     function resetLiveMetrics() {
         lmStatus.textContent = 'Без GT';
-        lmStatus.className   = 'lm-status';
+        lmStatus.className = 'lm-status';
         lmIouAvg.textContent = '—';
         lmIouMin.textContent = '—';
-        lmJitter.textContent  = '—';
+        lmJitter.textContent = '—';
         lmFlicker.textContent = '—';
     }
 
@@ -326,7 +426,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPlayPause.textContent = isVideoPaused ? '▶️' : '⏸️';
 
         const wsUrl = `ws://${window.location.host}/ws/video?path=${encodeURIComponent(fd.serverPath)}`;
-        currentWs   = new WebSocket(wsUrl);
+        currentWs = new WebSocket(wsUrl);
 
         currentWs.onopen = () => {
             videoScrubberContainer.style.display = 'flex';
@@ -355,20 +455,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.type === 'frame') {
                 if (currentViewMode === 'side') {
                     imgOrigSide.src = data.image_orig;
-                    imgSegSide.src  = data.image;
+                    imgSegSide.src = data.image;
                 } else if (currentViewMode === 'original') {
                     imgSingle.src = data.image_orig;
                 } else {
                     imgSingle.src = data.image;
                 }
 
-                metricFps.style.display  = 'inline-flex';
-                metricFps.textContent    = `⚡ ${data.fps} FPS`;
+                metricFps.style.display = 'inline-flex';
+                metricFps.textContent = `⚡ ${data.fps} FPS`;
                 metricTime.style.display = 'inline-flex';
-                metricTime.textContent   = `⏱️ ${data.time_ms}ms`;
+                metricTime.textContent = `⏱️ ${data.time_ms}ms`;
 
                 if (!isDraggingSlider) {
-                    videoSlider.value       = data.frame_idx;
+                    videoSlider.value = data.frame_idx;
                     videoTimeEl.textContent = `${data.frame_idx} / ${totalFrames}`;
                 }
 
@@ -377,19 +477,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (m.warming_up) {
                     lmStatus.textContent = 'Warming Up…';
-                    lmStatus.className   = 'lm-status warming';
+                    lmStatus.className = 'lm-status warming';
                     lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
                     lmJitter.textContent = '—'; lmFlicker.textContent = '—';
                 } else if (m.has_data) {
                     lmStatus.textContent = 'Running';
-                    lmStatus.className   = 'lm-status running';
+                    lmStatus.className = 'lm-status running';
                     lmIouAvg.textContent = m.iou_avg.toFixed(3);
                     lmIouMin.textContent = m.iou_min.toFixed(3);
-                    lmJitter.textContent  = m.jitter.toFixed(1);
+                    lmJitter.textContent = m.jitter.toFixed(1);
                     lmFlicker.textContent = m.flicker.toFixed(1) + '%';
                 } else {
                     lmStatus.textContent = 'Без GT-файлів';
-                    lmStatus.className   = 'lm-status';
+                    lmStatus.className = 'lm-status';
                     lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
                     lmJitter.textContent = '—'; lmFlicker.textContent = '—';
                 }
@@ -430,56 +530,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (fd.isVideo) {
             metricPolygons.style.display = 'none';
-            photoMetrics.style.display   = 'none';
         }
 
         if (fd.processed && !fd.isVideo) {
-            metricTime.style.display     = 'inline-flex';
-            metricTime.textContent       = `⏱️ ${fd.timeMs}ms`;
+            metricTime.style.display = 'inline-flex';
+            metricTime.textContent = `⏱️ ${fd.timeMs}ms`;
             metricPolygons.style.display = 'inline-flex';
-            metricPolygons.textContent   = `🟦 ${fd.polygons} об'єктів`;
-            metricFps.style.display      = 'none';
-
-            // Photo metrics panel
-            const m = fd.metrics;
-            if (m && m.has_gt) {
-                photoMetrics.style.display = 'block';
-                pmGtBadge.textContent      = '✅ з GT';
-                pmGtBadge.className        = 'gt-badge gt-yes';
-                pmIou.textContent          = m.iou.toFixed(3);
-                pmPrec.textContent         = m.precision.toFixed(3);
-                pmRecall.textContent       = m.recall.toFixed(3);
-                pmF1.textContent           = m.f1.toFixed(3);
-                pmCounts.textContent       = `Pred: ${m.objects}  |  GT: ${m.gt_count}`;
-            } else if (m && !m.has_gt) {
-                photoMetrics.style.display = 'block';
-                pmGtBadge.textContent      = '❌ без GT';
-                pmGtBadge.className        = 'gt-badge gt-no';
-                pmIou.textContent = pmPrec.textContent = pmRecall.textContent = pmF1.textContent = '—';
-                pmCounts.textContent = m.reason || 'Файл GT не знайдено';
-            } else {
-                photoMetrics.style.display = 'none';
-            }
+            metricPolygons.textContent = `🟦 ${fd.polygons} об'єктів`;
+            metricFps.style.display = 'none';
         } else if (!fd.isVideo) {
             metricTime.style.display = metricPolygons.style.display = metricFps.style.display = 'none';
-            photoMetrics.style.display = 'none';
         }
+
+        // Show placeholder only when images are genuinely absent from memory
+        // (metrics-only upload) — toggle state doesn't affect already-processed files
+        const hasNoImages = !fd.isVideo && fd.processed && !fd.originalB64 && !fd.segmentedB64;
+        if (hasNoImages) {
+            metricsOnlyPlaceholder.style.display = 'flex';
+            wrapper.style.display = 'none';
+            wrapperSide.style.display = 'none';
+            return;
+        }
+        metricsOnlyPlaceholder.style.display = 'none';
 
         let segImg = fd.originalB64;
         if (!fd.isVideo && fd.processed) {
-            if (currentFilter === 'masks')      segImg = fd.segmentedMasksB64;
+            if (currentFilter === 'masks') segImg = fd.segmentedMasksB64;
             else if (currentFilter === 'boxes') segImg = fd.segmentedBoxesB64;
-            else                                segImg = fd.segmentedB64;
+            else segImg = fd.segmentedB64;
         }
 
         if (currentViewMode === 'side') {
-            wrapper.style.display     = 'none';
+            wrapper.style.display = 'none';
             wrapperSide.style.display = 'flex';
-            if (!fd.isVideo) { imgOrigSide.src = fd.originalB64; imgSegSide.src = segImg; }
+            if (!fd.isVideo) { imgOrigSide.src = fd.originalB64 || ''; imgSegSide.src = segImg || ''; }
         } else {
-            wrapper.style.display     = 'block';
+            wrapper.style.display = 'block';
             wrapperSide.style.display = 'none';
-            if (!fd.isVideo) imgSingle.src = (currentViewMode === 'original') ? fd.originalB64 : segImg;
+            if (!fd.isVideo) imgSingle.src = (currentViewMode === 'original') ? (fd.originalB64 || '') : (segImg || '');
         }
     }
 
@@ -516,14 +604,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     imgArea.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const delta  = e.deltaY < 0 ? 1 : -1;
-        const rect   = imgArea.getBoundingClientRect();
-        const mx     = e.clientX - rect.left;
-        const my     = e.clientY - rect.top;
-        const oldSc  = scale;
+        const delta = e.deltaY < 0 ? 1 : -1;
+        const rect = imgArea.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const oldSc = scale;
         scale = Math.min(Math.max(0.1, scale * Math.exp(delta * 0.1)), 10);
-        panX  = mx - (mx - panX) * (scale / oldSc);
-        panY  = my - (my - panY) * (scale / oldSc);
+        panX = mx - (mx - panX) * (scale / oldSc);
+        panY = my - (my - panY) * (scale / oldSc);
         applyTransform();
     }, { passive: false });
 });

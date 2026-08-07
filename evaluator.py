@@ -3,6 +3,8 @@ import numpy as np
 import yaml
 from pathlib import Path
 import time
+import json
+import urllib.parse
 from metrics import (
     compute_box_iou, compute_mask_iou,
     calculate_precision_recall, calculate_f1_score,
@@ -52,6 +54,107 @@ def _load_gt_from_file(lbl_path, task, width, height):
             elif task == 'det' and len(parts) == 5:
                 gt_boxes.append(box_to_absolute(parts[1:], width, height))
     return gt_masks, gt_boxes
+
+
+_JSON_CACHE = {}
+
+def _load_gt_from_json(json_path, filename, width, height, task='seg'):
+    """Load GT masks or boxes from a custom JSON annotation file.
+       Returns (gt_masks, gt_boxes, is_found).
+    """
+    gt_masks, gt_boxes = [], []
+    json_path = Path(json_path)
+    if not json_path.exists():
+        return gt_masks, gt_boxes, False
+        
+    path_str = str(json_path)
+    if path_str not in _JSON_CACHE:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            _JSON_CACHE[path_str] = json.load(f)
+            
+    data = _JSON_CACHE[path_str]
+    
+    target_stem = Path(filename).stem
+    
+    import re
+    clean_target = re.sub(r'[^a-zA-Z0-9]', '', target_stem).lower()
+    
+    # Find the specific image by matching the uploaded filename stem with the JSON uuid or link
+    image_data = None
+    for item in data:
+        item_uuid = item.get("uuid", "")
+        clean_uuid = re.sub(r'[^a-zA-Z0-9]', '', item_uuid).lower()
+        
+        link = item.get("link", "")
+        unquoted_link = urllib.parse.unquote(urllib.parse.unquote(link))
+        clean_link = re.sub(r'[^a-zA-Z0-9]', '', unquoted_link).lower()
+        
+        # Check if the filename matches uuid, or is a substring of uuid, or uuid is a substring of filename, or it's in the link
+        if clean_uuid and (clean_target == clean_uuid or clean_target in clean_uuid or clean_uuid in clean_target):
+            image_data = item
+            break
+        if clean_target and clean_target in clean_link:
+            image_data = item
+            break
+            
+    if not image_data:
+        return gt_masks, gt_boxes, False
+
+    # The JSON annotations were drawn on 1280x720 resolution images.
+    # We must scale them to the actual uploaded image dimensions.
+    scale_x = width / 1280.0
+    scale_y = height / 720.0
+    print(f"DEBUG: Scaled JSON polygons for {filename} by {scale_x}x{scale_y}")
+
+    # Extract polygons (for segmentation)
+    if task == 'seg':
+        has_seg_annotation = False
+        
+        # Explicitly marked as having no sky
+        if image_data.get("no_sky") is True:
+            has_seg_annotation = True
+            
+        if "ignore_polygons" in image_data:
+            has_seg_annotation = True
+            for poly_points in image_data["ignore_polygons"]:
+                mask = np.zeros((height, width), dtype=np.uint8)
+                # JSON format is usually [[[x,y], [x,y], ...]] or [[x,y], [x,y]]
+                # Depending on nesting, extract the list of points
+                if len(poly_points) > 0:
+                    pts = np.array(poly_points, dtype=np.float32)
+                    # Ensure shape is (N, 2)
+                    if pts.ndim == 3 and pts.shape[0] == 1:
+                        pts = pts[0]
+                    if len(pts) >= 3:
+                        # Scale coordinates
+                        pts[:, 0] *= scale_x
+                        pts[:, 1] *= scale_y
+                        pts = pts.astype(np.int32)
+                        
+                        cv2.fillPoly(mask, [pts], 1)
+                        gt_masks.append(mask)
+                        
+        if not has_seg_annotation:
+            return gt_masks, gt_boxes, False
+
+    # Extract rects (for detection) - stored as flat list [x, y, w, h, x, y, w, h...] in ignorerects
+    if task == 'det':
+        if "ignorerects" not in image_data:
+            return gt_masks, gt_boxes, False
+            
+        rects_flat = image_data["ignorerects"]
+        if isinstance(rects_flat, list):
+            for i in range(0, len(rects_flat), 4):
+                if i + 3 < len(rects_flat):
+                    rx, ry, rw, rh = rects_flat[i:i+4]
+                    # Convert to [x1, y1, x2, y2] and scale
+                    x1 = int(rx * scale_x)
+                    y1 = int(ry * scale_y)
+                    x2 = int((rx + rw) * scale_x)
+                    y2 = int((ry + rh) * scale_y)
+                    gt_boxes.append([x1, y1, x2, y2])
+                    
+    return gt_masks, gt_boxes, True
 
 
 def _match_predictions(pred_list, gt_list, iou_fn, iou_threshold):
