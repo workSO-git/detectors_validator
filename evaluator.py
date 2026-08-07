@@ -190,22 +190,22 @@ def _match_predictions(pred_list, gt_list, iou_fn, iou_threshold):
 class GenericEvaluator:
     def __init__(self, model_adapter, task='seg'):
         self.model = model_adapter
-        self.task  = task
+        self.task = task
 
     def _iou_fn(self):
         return compute_mask_iou if self.task == 'seg' else compute_box_iou
 
     # ── Dataset evaluation ───────────────────────────────────────────────────
-    def evaluate_dataset(self, data_yaml_path, iou_threshold=0.5, conf_threshold=0.25):
+    def evaluate_dataset(self, data_yaml_path, split='val', iou_threshold=0.5, conf_threshold=0.25):
         """
         Evaluate on a full dataset defined by a YOLO data.yaml.
         Calculates mIoU, Precision, Recall, F1.
         """
         with open(data_yaml_path, 'r', encoding='utf-8') as f:
             data_info = yaml.safe_load(f)
-
-        base_dir    = Path(data_yaml_path).parent
-        val_img_dir = base_dir / data_info.get('val', 'images/val')
+        base_dir = Path(data_yaml_path).parent
+        split_path_rel = data_info.get(split, f'images/{split}')
+        val_img_dir = base_dir / split_path_rel
         val_lbl_dir = val_img_dir.parent.parent / 'labels' / val_img_dir.name
 
         if not val_img_dir.exists():

@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--source', type=str, required=True, help="Path to dataset.yaml, image, or video file")
     parser.add_argument('--labels', type=str, default=None, help="Path to the labels directory (required for video_eval metrics, optional otherwise)")
     parser.add_argument('--task', type=str, default='seg', choices=['seg', 'det'], help="Task type: 'seg' (segmentation) or 'det' (detection)")
+    parser.add_argument('--split', type=str, default='val', choices=['train', 'val', 'test'], help="Dataset split to evaluate")
     parser.add_argument('--save-dir', type=str, default=None, help="Optional directory to save visual results (for single mode)")
     parser.add_argument('--iou-thresh', type=float, default=0.5, help="IoU threshold for considering a match")
     
@@ -31,7 +32,7 @@ def main():
     
     # 3. Run evaluation
     if args.mode == 'dataset':
-        evaluator.evaluate_dataset(args.source, iou_threshold=args.iou_thresh)
+        evaluator.evaluate_dataset(args.source, split=args.split, iou_threshold=args.iou_thresh)
     elif args.mode == 'single':
         save_dir_abs = str(Path(args.save_dir).resolve()) if args.save_dir else None
         evaluator.evaluate_single(args.source, save_dir=save_dir_abs)

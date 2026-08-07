@@ -1,0 +1,8 @@
+# External project paths for yolo_evaluator adapters
+# Paths are relative to the yolo_evaluator project root.
+
+external_paths:
+  # Папка ignore: FastSplitDetector + AutoMixedLayoutTrainer
+  ignore: "../ignore"
+  # Video_Interface_detection_investigation project
+  interface_investigation: "../Video_Interface_detection_investigation"
