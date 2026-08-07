@@ -183,6 +183,23 @@ async def process_image(
                 if lbl_file and lbl_file.exists():
                     gt_masks, gt_boxes = _load_gt_from_file(lbl_file, model.task, w, h)
                     has_gt_annotation = True
+
+            # Create an image overlay for Ground Truth if annotations exist
+            if has_gt_annotation:
+                img_gt = img.copy()
+                if gt_masks:
+                    # Draw GT masks with proper alpha blending so it darkens bright skies
+                    alpha = 0.7
+                    color = np.array([0, 0, 255], dtype=np.uint8) # Solid Red in BGR
+                    for mask in gt_masks:
+                        mask_bool = mask > 0
+                        img_gt[mask_bool] = (img_gt[mask_bool] * (1 - alpha) + color * alpha).astype(np.uint8)
+                if gt_boxes:
+                    # Draw GT boxes in Solid Red
+                    for box in gt_boxes:
+                        cv2.rectangle(img_gt, (box[0], box[1]), (box[2], box[3]), (0, 0, 255), 3)
+                
+                response["image_gt"] = encode(img_gt)
                 
             gt_list = gt_masks if model.task == 'seg' else gt_boxes
 

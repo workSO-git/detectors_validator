@@ -55,6 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentFileId = null;
     let currentFilter = 'all';
     let currentViewMode = 'side';   // default: side-by-side
+    let currentGtView = 'pred';
     let currentWs = null;
     let totalFrames = 0;
     let isDraggingSlider = false;
@@ -78,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set initial active states in the DOM
     setPillActive('filterGroup', currentFilter);
     setPillActive('modeGroup', currentViewMode);
+    setPillActive('gtToggleGroup', currentGtView);
 
     setupPillGroup('filterGroup', (val) => {
         currentFilter = val;
@@ -89,6 +91,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setupPillGroup('modeGroup', (val) => {
         currentViewMode = val;
+        renderMainView();
+    });
+
+    setupPillGroup('gtToggleGroup', (val) => {
+        currentGtView = val;
         renderMainView();
     });
 
@@ -275,6 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             segmentedB64:      filesData[i].metricsOnly ? null : data.image,
                             segmentedMasksB64: filesData[i].metricsOnly ? null : data.image_masks,
                             segmentedBoxesB64: filesData[i].metricsOnly ? null : data.image_boxes,
+                            gtB64:             filesData[i].metricsOnly ? null : data.image_gt,
                             timeMs:   data.time_ms,
                             polygons: data.polygons,
                             processed: true,
@@ -553,11 +561,22 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         metricsOnlyPlaceholder.style.display = 'none';
 
+        const gtToggleGroup = document.getElementById('gtToggleGroup');
+        if (!fd.isVideo && fd.processed && fd.gtB64) {
+            gtToggleGroup.style.display = 'inline-flex';
+        } else {
+            gtToggleGroup.style.display = 'none';
+        }
+
         let segImg = fd.originalB64;
         if (!fd.isVideo && fd.processed) {
-            if (currentFilter === 'masks') segImg = fd.segmentedMasksB64;
-            else if (currentFilter === 'boxes') segImg = fd.segmentedBoxesB64;
-            else segImg = fd.segmentedB64;
+            if (currentGtView === 'gt' && fd.gtB64) {
+                segImg = fd.gtB64;
+            } else {
+                if (currentFilter === 'masks') segImg = fd.segmentedMasksB64;
+                else if (currentFilter === 'boxes') segImg = fd.segmentedBoxesB64;
+                else segImg = fd.segmentedB64;
+            }
         }
 
         if (currentViewMode === 'side') {
