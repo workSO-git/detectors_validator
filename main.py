@@ -4,11 +4,38 @@ from evaluator import GenericEvaluator
 
 def get_model_adapter(model_type, model_path, task):
     """Factory function to instantiate the correct model adapter."""
+    adapter = None
     if model_type == 'yolo':
         from models.yolo_model import YoloModel
-        return YoloModel(model_path, task=task)
+        adapter = YoloModel(model_path, task=task)
+    elif model_type == 'ignore':
+        from models.ignore_adapter import IgnoreAdapter
+        # For ignore, model_path can be used as mask_dir or omitted (use default)
+        mask_dir = model_path if model_path and model_path.lower() != 'none' else None
+        adapter = IgnoreAdapter(mask_dir=mask_dir)
+    elif model_type == 'interface':
+        from models.interface_adapter import InterfaceAdapter
+        # If the string looks like a dictionary, parse it safely
+        if isinstance(model_path, str) and model_path.strip().startswith('{') and model_path.strip().endswith('}'):
+            import ast
+            try:
+                model_path = ast.literal_eval(model_path)
+            except (ValueError, SyntaxError):
+                pass
+                
+        if isinstance(model_path, dict):
+            adapter = InterfaceAdapter(model_path)
+        else:
+            if not model_path or ':' not in model_path:
+                raise ValueError("For interface models, provide --model as 'module:class' or a valid dict string")
+            mod, cls = model_path.split(':', 1)
+            adapter = InterfaceAdapter({'detector_module': mod, 'detector_class': cls})
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
+        
+    if adapter is not None:
+        adapter.task = task
+    return adapter
 
 def main():
     parser = argparse.ArgumentParser(description="Generic Model Evaluator (mIoU, Precision, Recall, F1, Jitter, Flicker)")
@@ -17,7 +44,7 @@ def main():
     parser.add_argument('--model', type=str, required=True, help="Path to the model weights/file")
     parser.add_argument('--source', type=str, required=True, help="Path to dataset.yaml, image, or video file")
     parser.add_argument('--labels', type=str, default=None, help="Path to the labels directory (required for video_eval metrics, optional otherwise)")
-    parser.add_argument('--task', type=str, default='seg', choices=['seg', 'det'], help="Task type: 'seg' (segmentation) or 'det' (detection)")
+    parser.add_argument('--task', type=str, default='seg', choices=['seg', 'det', 'ignore'], help="Task type: 'seg' (segmentation), 'det' (detection), or 'ignore' (global mask)")
     parser.add_argument('--split', type=str, default='val', choices=['train', 'val', 'test'], help="Dataset split to evaluate")
     parser.add_argument('--save-dir', type=str, default=None, help="Optional directory to save visual results (for single mode)")
     parser.add_argument('--iou-thresh', type=float, default=0.5, help="IoU threshold for considering a match")

@@ -148,6 +148,17 @@ class InterfaceAdapter(BaseModel):
             f"[InterfaceAdapter] Завантажено: {class_name} з {module_name}\n"
             f"  Детектор: {self._detector}"
         )
+        
+    @property
+    def warming_up(self):
+        """Returns True if the underlying detector is still learning/warming up (e.g., GMM)."""
+        if hasattr(self._detector, 'frames_processed') and hasattr(self._detector, 'learning_frames'):
+            return self._detector.frames_processed < self._detector.learning_frames
+        return False
+
+    def set_video_mode(self, is_video: bool):
+        if hasattr(self._detector, 'set_video_mode'):
+            self._detector.set_video_mode(is_video)
 
     # ── predict ───────────────────────────────────────────────────────────────
 
@@ -171,6 +182,15 @@ class InterfaceAdapter(BaseModel):
 
         if img is None:
             return {"masks": [], "boxes": [], "classes": []}
+
+        # Allow detectors to bypass the standard detect() if they provide their own predict()
+        # This is useful for detectors that want to return masks or custom dicts (e.g. EMADetector)
+        if hasattr(self._detector, "predict"):
+            try:
+                return self._detector.predict(img, conf_threshold=conf_threshold)
+            except Exception as e:
+                print(f"[InterfaceAdapter] Помилка predict(): {e}")
+                return {"masks": [], "boxes": [], "classes": []}
 
         try:
             raw = self._detector.detect(img)

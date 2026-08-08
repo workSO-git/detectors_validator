@@ -50,6 +50,63 @@ document.addEventListener('DOMContentLoaded', () => {
     const metricsOnlyLockBadge = document.getElementById('metrics-only-lock-badge');
     const metricsOnlyPlaceholder = document.getElementById('metrics-only-placeholder');
 
+    const modelSelect = document.getElementById('model-select');
+    const modelLoading = document.getElementById('model-loading');
+
+    // ── Load Models ──────────────────────────────────────────────────────────
+    async function fetchModels() {
+        try {
+            const res = await fetch('/api/models');
+            const data = await res.json();
+            modelSelect.innerHTML = '';
+            data.models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.name;
+                modelSelect.appendChild(opt);
+            });
+            if (data.current) modelSelect.value = data.current;
+        } catch (e) { console.error("Error loading models", e); }
+    }
+    fetchModels();
+
+    modelSelect.addEventListener('change', async (e) => {
+        const newModelId = e.target.value;
+        modelSelect.disabled = true;
+        modelLoading.style.display = 'inline';
+        try {
+            const fd = new FormData();
+            fd.append('model_id', newModelId);
+            const res = await fetch('/api/set_model', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (!data.success) {
+                alert("Помилка завантаження моделі: " + data.error);
+                await fetchModels(); // revert
+            } else {
+                // Reset all photos and re-process queue to update global metrics
+                filesData.forEach(f => {
+                    if (!f.isVideo) {
+                        f.processed = false;
+                        markDone(f.id, '⏳', 'Очікує');
+                    }
+                });
+                processQueue();
+                if (currentFileId) {
+                    const fd = filesData.find(f => f.id === currentFileId);
+                    if (fd && fd.isVideo) {
+                        startVideoStream(typeof isVideoPaused !== 'undefined' ? isVideoPaused : false);
+                    }
+                    renderMainView();
+                }
+            }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            modelSelect.disabled = false;
+            modelLoading.style.display = 'none';
+        }
+    });
+
     // ── State ────────────────────────────────────────────────────────────────
     let filesData = [];
     let currentFileId = null;
@@ -143,8 +200,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const fd = filesData.find(f => f.id === currentFileId);
         if (!fd) return;
         if (fd.isVideo) {
-            if (videoWs && videoWs.readyState === WebSocket.OPEN) {
-                videoWs.send(JSON.stringify({ command: 'set_labels_dir', path }));
+            if (currentWs && currentWs.readyState === WebSocket.OPEN) {
+                currentWs.send(JSON.stringify({ command: 'set_labels_dir', path }));
             }
         } else if (fd.processed) {
             // Re-evaluate current photo
@@ -155,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnPickLabelsYaml.addEventListener('click', async () => onLabelsPathPicked(await pickFile()));
     inputLabelsDir.addEventListener('change', onLabelsPathChanged);
+    inputLabelsDir.addEventListener('input', onLabelsPathChanged);
 
     // ── Metrics-Only toggle ──────────────────────────────────────────────────
     chkMetricsOnly.addEventListener('change', () => {
@@ -382,16 +440,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Re-evaluate photo metrics with a new labels dir ──────────────────
     async function reprocessPhotoMetrics(fdEntry) {
+        await reprocessPhoto(fdEntry);
+    }
+
+    async function reprocessPhoto(fdEntry) {
         const labelsDir = inputLabelsDir.value.trim();
-        if (!labelsDir || fdEntry.isVideo) return;
+        if (fdEntry.isVideo) return;
         try {
             const fd2 = new FormData();
             fd2.append('file', fdEntry.file);
-            fd2.append('labels_dir', labelsDir);
+            if (labelsDir) fd2.append('labels_dir', labelsDir);
+            if (fdEntry.metricsOnly) fd2.append('no_images', 'true');
             const res = await fetch('/api/process', { method: 'POST', body: fd2 });
             const data = await res.json();
             if (data.success) {
-                fdEntry.metrics = data.metrics || null;
+                Object.assign(fdEntry, {
+                    segmentedB64:      fdEntry.metricsOnly ? null : data.image,
+                    segmentedMasksB64: fdEntry.metricsOnly ? null : data.image_masks,
+                    segmentedBoxesB64: fdEntry.metricsOnly ? null : data.image_boxes,
+                    gtB64:             fdEntry.metricsOnly ? null : data.image_gt,
+                    timeMs:   data.time_ms,
+                    polygons: data.polygons,
+                    processed: true,
+                    metrics: data.metrics || null
+                });
+                let icon = fdEntry.metricsOnly ? '📊' : '✅';
+                markDone(fdEntry.id, icon, 'Оброблено успішно');
                 updateBatchMetrics();
             }
         } catch (e) { console.error(e); }
@@ -448,11 +522,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 totalFrames = data.total_frames;
                 videoSlider.max = totalFrames;
                 videoTimeEl.textContent = `0 / ${totalFrames}`;
-                currentWs.send(JSON.stringify({ command: 'set_filter', filter: currentFilter }));
-                currentWs.send(JSON.stringify({ command: 'set_labels_dir', path: inputLabelsDir.value.trim() }));
-                // Send pause command immediately if starting paused
-                if (isVideoPaused) {
-                    currentWs.send(JSON.stringify({ command: 'pause', state: true }));
+                
+                const ws = event.target;
+                try {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ command: 'set_filter', filter: currentFilter }));
+                        ws.send(JSON.stringify({ command: 'set_labels_dir', path: inputLabelsDir.value.trim() }));
+                        if (isVideoPaused) {
+                            ws.send(JSON.stringify({ command: 'pause', state: true }));
+                        }
+                    }
+                } catch (err) {
+                    console.error("Error sending init commands:", err);
                 }
                 return;
             }
@@ -489,15 +570,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
                     lmJitter.textContent = '—'; lmFlicker.textContent = '—';
                 } else if (m.has_data) {
-                    lmStatus.textContent = 'Running';
+                    lmStatus.textContent = 'Знайдено GT / Рахую';
                     lmStatus.className = 'lm-status running';
+                    document.getElementById('lm-iou-cur').textContent = m.iou_cur.toFixed(3);
                     lmIouAvg.textContent = m.iou_avg.toFixed(3);
                     lmIouMin.textContent = m.iou_min.toFixed(3);
                     lmJitter.textContent = m.jitter.toFixed(1);
                     lmFlicker.textContent = m.flicker.toFixed(1) + '%';
                 } else {
-                    lmStatus.textContent = 'Без GT-файлів';
+                    lmStatus.textContent = 'Без GT';
                     lmStatus.className = 'lm-status';
+                    document.getElementById('lm-iou-cur').textContent = '—';
                     lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
                     lmJitter.textContent = '—'; lmFlicker.textContent = '—';
                 }

@@ -43,6 +43,15 @@
     <!-- Settings panel -->
     <div class="sidebar-settings">
 
+      <!-- Model Select -->
+      <div style="margin-bottom: 12px;">
+        <label>🤖 Модель</label>
+        <div style="display:flex; gap:6px; margin-top:4px; align-items:center;">
+          <select id="model-select" class="field" style="flex:1;"></select>
+          <span id="model-loading" style="display:none;" title="Завантаження...">🔄</span>
+        </div>
+      </div>
+
       <!-- Metrics-only mode -->
       <div class="metrics-only-row" id="metrics-only-row">
         <label class="toggle-label" for="chk-metrics-only">
@@ -63,7 +72,7 @@
       <div>
         <label>🏷️ Розмітка GT (.yaml або .json)</label>
         <div style="display:flex; gap:6px; margin-top:4px;">
-          <input type="text" id="input-labels-dir" class="field" value="../seg_training/yolo_seg_dataset/dataset.yaml"
+          <input type="text" id="input-labels-dir" class="field" value="C:\Users\Sasha\projects\CV\db_task\merged.json"
             placeholder="Шлях до .yaml або .json" style="flex:1;">
           <button class="btn btn-icon" id="btn-pick-labels-yaml" title="Вибрати файл розмітки"
             style="border: 1px solid var(--border);">📄</button>
@@ -227,6 +236,10 @@
             <span id="lm-status" class="lm-status">Без GT</span>
           </div>
           <div class="lm-grid">
+            <div class="lm-cell" title="IoU на поточному кадрі">
+              <span class="lm-cell-label">IoU cur</span>
+              <span class="lm-cell-value" id="lm-iou-cur">—</span>
+            </div>
             <div class="lm-cell" title="Середній IoU за останні 50 кадрів (бажано > 0.5)">
               <span class="lm-cell-label">IoU avg</span>
               <span class="lm-cell-value" id="lm-iou-avg">—</span>
@@ -253,7 +266,7 @@
   </div><!-- /main -->
 
   <!-- v3: cache-bust to force fresh JS load -->
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=1003"></script>
 </body>
 
 </html>

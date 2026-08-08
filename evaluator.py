@@ -74,6 +74,39 @@ def _load_gt_from_json(json_path, filename, width, height, task='seg'):
             
     data = _JSON_CACHE[path_str]
     
+    if isinstance(data, dict) and "ignore_zones" in data:
+        import re
+        match = re.search(r'\d+', filename)
+        if not match:
+            return [], [], False
+        frame_idx = int(match.group())
+        
+        orig_w, orig_h = data.get("video_resolution", [width, height])
+        scale_x = width / orig_w
+        scale_y = height / orig_h
+        
+        found = False
+        for zone in data["ignore_zones"]:
+            start = zone.get("frame_start", 0)
+            end = zone.get("frame_end", -1)
+            
+            if start <= frame_idx and (end == -1 or frame_idx <= end):
+                found = True
+                x = zone.get("x", 0) * scale_x
+                y = zone.get("y", 0) * scale_y
+                w = zone.get("w", 0) * scale_x
+                h = zone.get("h", 0) * scale_y
+                
+                x1, y1 = int(x), int(y)
+                x2, y2 = int(x + w), int(y + h)
+                
+                if task in ('det', 'ignore'):
+                    gt_boxes.append([x1, y1, x2, y2])
+                elif task == 'seg':
+                    gt_masks.append([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
+                    
+        return gt_masks, gt_boxes, found
+    
     target_stem = Path(filename).stem
     
     import re
@@ -282,6 +315,9 @@ class GenericEvaluator:
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         print(f"🚀 Evaluating video: {video_path.name} ({total_frames} frames)")
+        
+        if hasattr(self.model, 'set_video_mode'):
+            self.model.set_video_mode(True)
 
         all_ious, inference_times = [], []
         total_tp, total_fp, total_fn = 0, 0, 0
@@ -299,8 +335,12 @@ class GenericEvaluator:
             # Load GT for this frame if labels_dir is given
             gt_masks, gt_boxes = [], []
             if labels_dir:
-                lbl_path = labels_dir / f"{frame_idx:04d}.txt"
-                gt_masks, gt_boxes = _load_gt_from_file(lbl_path, self.task, w, h)
+                stem = f"{frame_idx:04d}"
+                if labels_dir.suffix.lower() == '.json':
+                    gt_masks, gt_boxes, _ = _load_gt_from_json(labels_dir, stem, w, h, self.task)
+                else:
+                    lbl_path = labels_dir / f"{stem}.txt"
+                    gt_masks, gt_boxes = _load_gt_from_file(lbl_path, self.task, w, h)
 
             # Run inference
             t0    = time.perf_counter()
@@ -309,25 +349,58 @@ class GenericEvaluator:
 
             pred_masks = preds.get('masks', [])
             pred_boxes = preds.get('boxes', [])
-            pred_list  = pred_masks if self.task == 'seg' else pred_boxes
-            gt_list    = gt_masks   if self.task == 'seg' else gt_boxes
+            
+            if self.task == 'ignore':
+                pred_list = pred_masks if pred_masks else pred_boxes
+                gt_list = gt_boxes
+            else:
+                pred_list  = pred_masks if self.task == 'seg' else pred_boxes
+                gt_list    = gt_masks   if self.task == 'seg' else gt_boxes
 
             # Detect presence & centroid (for jitter/flicker — always calculated)
             has_detection = len(pred_list) > 0
             detections_presence.append(has_detection)
             if has_detection:
-                c = get_mask_centroid(pred_list[0]) if self.task == 'seg' else get_box_centroid(pred_list[0])
+                if self.task == 'seg' or (self.task == 'ignore' and pred_masks):
+                    c = get_mask_centroid(pred_list[0])
+                else:
+                    c = get_box_centroid(pred_list[0])
                 centroids.append(c)
             else:
                 centroids.append(None)
 
             # IoU matching only if GT available
             if labels_dir and gt_list:
-                tp, fp, fn, ious = _match_predictions(pred_list, gt_list, iou_fn, iou_threshold)
-                total_tp += tp
-                total_fp += fp
-                total_fn += fn
-                all_ious.extend(ious)
+                if self.task == 'ignore':
+                    g_mask_full = np.zeros((h, w), dtype=np.uint8)
+                    for g in gt_list:
+                        if isinstance(g, np.ndarray):
+                            g_mask_full = np.logical_or(g_mask_full, g)
+                        else:
+                            cv2.rectangle(g_mask_full, (g[0], g[1]), (g[2], g[3]), 1, -1)
+                    
+                    p_mask_full = np.zeros((h, w), dtype=np.uint8)
+                    for p in pred_list:
+                        if isinstance(p, np.ndarray):
+                            p_mask_full = np.logical_or(p_mask_full, p)
+                        else:
+                            cv2.rectangle(p_mask_full, (p[0], p[1]), (p[2], p[3]), 1, -1)
+                            
+                    frame_iou = compute_mask_iou(p_mask_full.astype(np.uint8), g_mask_full.astype(np.uint8))
+                    
+                    # For global mask, treat as 1 object for tp/fp/fn
+                    if frame_iou >= iou_threshold:
+                        total_tp += 1
+                    else:
+                        if len(pred_list) > 0: total_fp += 1
+                        total_fn += 1
+                    all_ious.append(frame_iou)
+                else:
+                    tp, fp, fn, ious = _match_predictions(pred_list, gt_list, iou_fn, iou_threshold)
+                    total_tp += tp
+                    total_fp += fp
+                    total_fn += fn
+                    all_ious.extend(ious)
             elif labels_dir:
                 # GT file exists but no annotations → any predictions are FP
                 total_fp += len(pred_list)
