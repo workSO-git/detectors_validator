@@ -242,6 +242,47 @@ document.addEventListener('DOMContentLoaded', () => {
     btnUpload.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', e => handleFiles(e.target.files));
 
+    // ── Open Video Locally (no upload, instant) ──────────────────────────────
+    const btnOpenVideo = document.getElementById('btn-open-video');
+    if (btnOpenVideo) {
+        btnOpenVideo.addEventListener('click', async () => {
+            btnOpenVideo.disabled = true;
+            btnOpenVideo.textContent = '⏳ Вибір файлу...';
+            try {
+                const res = await fetch('/api/pick_file?video=1');
+                const { path } = await res.json();
+                if (!path) return;
+
+                // Register video with server (no byte upload!)
+                const fd2 = new FormData();
+                fd2.append('local_path', path);
+                const regRes = await fetch('/api/register_video', { method: 'POST', body: fd2 });
+                const data = await regRes.json();
+                if (!data.success) { alert(data.error); return; }
+
+                const id = Date.now() + '_local';
+                const fakeName = data.filename;
+                filesData.push({
+                    id, file: { name: fakeName },
+                    isVideo: true,
+                    serverPath: data.path,
+                    originalB64: null, segmentedB64: null,
+                    timeMs: null, polygons: 0,
+                    processed: true, metrics: null, metricsOnly: false
+                });
+                addToSidebar(id, fakeName, true);
+                markDone(id, '🎬');
+                selectFile(id);
+            } catch (e) {
+                console.error(e);
+                alert('Помилка відкриття відео: ' + e.message);
+            } finally {
+                btnOpenVideo.disabled = false;
+                btnOpenVideo.textContent = '🎬 Відкрити відео (локально)';
+            }
+        });
+    }
+
     // Prevent browser from opening dropped files natively
     window.addEventListener('dragover', (e) => e.preventDefault(), false);
     window.addEventListener('drop', (e) => e.preventDefault(), false);

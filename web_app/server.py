@@ -246,8 +246,8 @@ async def pick_folder():
     return {"path": path}
 
 @app.get("/api/pick_file")
-async def pick_file():
-    """Open a native OS file picker dialog for YAML files."""
+async def pick_file(video: int = 0):
+    """Open a native OS file picker dialog for YAML/JSON files or videos."""
     import tkinter as tk
     from tkinter import filedialog
 
@@ -255,10 +255,16 @@ async def pick_file():
         root = tk.Tk()
         root.withdraw()
         root.wm_attributes('-topmost', True)
-        file_path = filedialog.askopenfilename(
-            title="Виберіть dataset.yaml або .json",
-            filetypes=[("YAML / JSON", "*.yaml *.yml *.json"), ("All files", "*.*")]
-        )
+        if video:
+            file_path = filedialog.askopenfilename(
+                title="Виберіть відеофайл",
+                filetypes=[("Video files", "*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.ts"), ("All files", "*.*")]
+            )
+        else:
+            file_path = filedialog.askopenfilename(
+                title="Виберіть dataset.yaml або .json",
+                filetypes=[("YAML / JSON", "*.yaml *.yml *.json"), ("All files", "*.*")]
+            )
         root.destroy()
         return file_path or ""
 
@@ -428,6 +434,18 @@ async def upload_video(request: Request, filename: str):
         return {"success": True, "path": str(file_path)}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/api/register_video")
+async def register_video(local_path: str = Form(...)):
+    """Register a local video file by path — no file copy needed, instant."""
+    p = Path(local_path)
+    if not p.exists() or not p.is_file():
+        return JSONResponse(status_code=404, content={"error": f"File not found: {local_path}"})
+    # Check it's a video extension
+    if p.suffix.lower() not in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v', '.ts']:
+        return JSONResponse(status_code=400, content={"error": "Not a supported video format"})
+    return {"success": True, "path": str(p), "filename": p.name}
+
 
 @app.websocket("/ws/video")
 async def websocket_video(websocket: WebSocket, path: str):
