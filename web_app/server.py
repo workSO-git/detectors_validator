@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import math
 import base64
 import cv2
 import numpy as np
@@ -12,6 +13,33 @@ from pydantic import BaseModel
 import uuid
 import asyncio
 import collections
+
+
+def _safe_float(v):
+    """Convert to float, returning None for NaN/Inf (which break JSON serialization)."""
+    if v is None:
+        return None
+    f = float(v)
+    return None if math.isnan(f) or math.isinf(f) else f
+
+
+def _smart_iou(p, g, shape):
+    """Compute IoU between prediction and GT, handling mask/box mixed types."""
+    from metrics import compute_mask_iou, compute_box_iou
+    is_p_mask = isinstance(p, np.ndarray)
+    is_g_mask = isinstance(g, np.ndarray)
+    if is_p_mask and is_g_mask:
+        return compute_mask_iou(p, g)
+    elif not is_p_mask and not is_g_mask:
+        return compute_box_iou(p, g)
+    elif is_p_mask and not is_g_mask:
+        g_mask = np.zeros(shape[:2], dtype=np.uint8)
+        cv2.rectangle(g_mask, (g[0], g[1]), (g[2], g[3]), 1, -1)
+        return compute_mask_iou(p, g_mask)
+    else:
+        p_mask = np.zeros(shape[:2], dtype=np.uint8)
+        cv2.rectangle(p_mask, (p[0], p[1]), (p[2], p[3]), 1, -1)
+        return compute_mask_iou(p_mask, g)
 
 current_dir = Path(__file__).parent
 parent_dir = current_dir.parent
@@ -421,7 +449,7 @@ async def websocket_video(websocket: WebSocket, path: str):
     state = {
         "seek": None,
         "filter": "all",
-        "paused": False,
+        "paused": True,   # Start paused — client sends 'pause: false' to begin playback
         "labels_dir": None
     }
     
@@ -463,8 +491,8 @@ async def websocket_video(websocket: WebSocket, path: str):
                         buffer_ious.clear()
                         buffer_centroids.clear()
                         buffer_detections.clear()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"receive_commands error: {e}")
 
     # IgnoreAdapter dynamic training: train on the current video before streaming
     if hasattr(model, 'train') and getattr(model, '__class__', None).__name__ == 'IgnoreAdapter':
@@ -490,8 +518,9 @@ async def websocket_video(websocket: WebSocket, path: str):
 
     try:
         while True:
-            if recv_task.done():
-                break
+            # recv_task is intentionally NOT checked here.
+            # If receive_commands() fails (e.g. client sent bad JSON), we keep streaming.
+            # The loop will exit naturally when cap.read() returns False or WebSocket closes.
 
             loop_start_time = time.time()
             force_read = False
@@ -501,8 +530,11 @@ async def websocket_video(websocket: WebSocket, path: str):
                 force_read = True
 
             if state["paused"] and not force_read:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
                 continue
+            
+            # If we just seeked while paused, read + send exactly one frame, then pause again
+            re_pause_after = state["paused"] and force_read
 
             ret, frame = cap.read()
             if not ret:
@@ -595,22 +627,6 @@ async def websocket_video(websocket: WebSocket, path: str):
                         frame_iou = 0.0
                         matched_gt = set()
                         
-                        def _smart_iou(p, g, shape):
-                            is_p_mask = isinstance(p, np.ndarray)
-                            is_g_mask = isinstance(g, np.ndarray)
-                            if is_p_mask and is_g_mask:
-                                return compute_mask_iou(p, g)
-                            elif not is_p_mask and not is_g_mask:
-                                return compute_box_iou(p, g)
-                            elif is_p_mask and not is_g_mask:
-                                g_mask = np.zeros(shape[:2], dtype=np.uint8)
-                                cv2.rectangle(g_mask, (g[0], g[1]), (g[2], g[3]), 1, -1)
-                                return compute_mask_iou(p, g_mask)
-                            else:
-                                p_mask = np.zeros(shape[:2], dtype=np.uint8)
-                                cv2.rectangle(p_mask, (p[0], p[1]), (p[2], p[3]), 1, -1)
-                                return compute_mask_iou(p_mask, g)
-                                
                         if model.task == 'ignore':
                             # For ignore zones, we merge all GT and Pred items into single masks to compute global IoU
                             g_mask_full = np.zeros((h, w), dtype=np.uint8)
@@ -655,11 +671,11 @@ async def websocket_video(websocket: WebSocket, path: str):
                         metrics_payload = {
                             "warming_up": False,
                             "has_data": True,
-                            "iou_cur": float(frame_iou),
-                            "iou_avg": float(np.mean(buffer_ious)),
-                            "iou_min": float(np.min(buffer_ious)),
-                            "jitter": float(calculate_jitter(list(buffer_centroids))),
-                            "flicker": float(calculate_flicker_rate(list(buffer_detections)))
+                            "iou_cur": _safe_float(frame_iou),
+                            "iou_avg": _safe_float(np.mean(buffer_ious)),
+                            "iou_min": _safe_float(np.min(buffer_ious)),
+                            "jitter": _safe_float(calculate_jitter(list(buffer_centroids))),
+                            "flicker": _safe_float(calculate_flicker_rate(list(buffer_detections)))
                         }
                         
                         # Draw GT on img_orig so the user can see what is being evaluated against
@@ -712,12 +728,17 @@ async def websocket_video(websocket: WebSocket, path: str):
                 "metrics": metrics_payload
             })
             
+            if re_pause_after:
+                state["paused"] = True
+
             elapsed = time.time() - loop_start_time
             sleep_amount = getattr(model, 'frame_delay', 0.033) - elapsed
             if sleep_amount > 0:
                 await asyncio.sleep(sleep_amount)
             else:
                 await asyncio.sleep(0.001)
+    except WebSocketDisconnect:
+        pass  # Normal client disconnect — no error needed
     except Exception as e:
         print(f"WS Error: {e}")
     finally:

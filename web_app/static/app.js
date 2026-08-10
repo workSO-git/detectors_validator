@@ -84,6 +84,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 await fetchModels(); // revert
             } else {
                 // Reset all photos and re-process queue to update global metrics
+                queueVersion++;
+                isProcessing = false; // Force re-entry into processQueue loop
                 filesData.forEach(f => {
                     if (!f.isVideo) {
                         f.processed = false;
@@ -92,9 +94,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 processQueue();
                 if (currentFileId) {
-                    const fd = filesData.find(f => f.id === currentFileId);
-                    if (fd && fd.isVideo) {
-                        startVideoStream(typeof isVideoPaused !== 'undefined' ? isVideoPaused : false);
+                    const curFd = filesData.find(f => f.id === currentFileId);
+                    if (curFd && curFd.isVideo) {
+                        // Close old stream first, then re-open with new model
+                        if (currentWs) { currentWs.close(); currentWs = null; }
+                        startVideoStream(isVideoPaused);
                     }
                     renderMainView();
                 }
@@ -301,6 +305,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ── Processing queue ─────────────────────────────────────────────────────
+    let queueVersion = 0;
+
     async function processQueue() {
         if (isProcessing) return;
         if (!filesData.some(f => !f.processed)) return;
@@ -308,8 +314,11 @@ document.addEventListener('DOMContentLoaded', () => {
         isProcessing = true;
         progressContainer.style.display = 'block';
 
-        for (let i = 0; i < filesData.length; i++) {
-            if (filesData[i].processed) continue;
+        while (true) {
+            let i = filesData.findIndex(f => !f.processed);
+            if (i === -1) break; // All done
+
+            let currentVersion = queueVersion;
             updateProgress(filesData.filter(f => f.processed).length, filesData.length);
 
             try {
@@ -319,6 +328,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         headers: { 'Content-Type': filesData[i].file.type || 'application/octet-stream' }
                     });
                     const data = await res.json();
+                    if (currentVersion !== queueVersion) continue;
+                    
                     if (data.success) {
                         filesData[i].serverPath = data.path;
                         filesData[i].processed = true;
@@ -334,6 +345,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (filesData[i].metricsOnly) fd2.append('no_images', 'true');
                     const res = await fetch('/api/process', { method: 'POST', body: fd2 });
                     const data = await res.json();
+                    if (currentVersion !== queueVersion) continue;
+
                     if (data.success) {
                         Object.assign(filesData[i], {
                             // Only store images if NOT metrics-only (saves RAM)
@@ -357,7 +370,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             } catch (err) {
                 console.error(err);
-                markDone(filesData[i].id, '❌');
+                if (currentVersion !== queueVersion) continue;
+                filesData[i].processed = true; // Mark done to prevent infinite loop
+                markDone(filesData[i].id, '❌', 'Помилка обробки');
             }
         }
 
@@ -510,86 +525,102 @@ document.addEventListener('DOMContentLoaded', () => {
         const wsUrl = `ws://${window.location.host}/ws/video?path=${encodeURIComponent(fd.serverPath)}`;
         currentWs = new WebSocket(wsUrl);
 
+        const thisWs = currentWs;
         currentWs.onopen = () => {
             videoScrubberContainer.style.display = 'flex';
             resetLiveMetrics();
         };
 
         currentWs.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            // Ignore messages from stale connections
+            if (event.target !== thisWs) return;
+            try {
+                const data = JSON.parse(event.data);
 
-            if (data.type === 'init') {
-                totalFrames = data.total_frames;
-                videoSlider.max = totalFrames;
-                videoTimeEl.textContent = `0 / ${totalFrames}`;
-                
-                const ws = event.target;
-                try {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ command: 'set_filter', filter: currentFilter }));
-                        ws.send(JSON.stringify({ command: 'set_labels_dir', path: inputLabelsDir.value.trim() }));
-                        if (isVideoPaused) {
-                            ws.send(JSON.stringify({ command: 'pause', state: true }));
+                if (data.type === 'init') {
+                    totalFrames = data.total_frames;
+                    videoSlider.max = totalFrames;
+                    videoTimeEl.textContent = `0 / ${totalFrames}`;
+                    
+                    const ws = event.target;
+                    try {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ command: 'set_filter', filter: currentFilter }));
+                            ws.send(JSON.stringify({ command: 'set_labels_dir', path: inputLabelsDir.value.trim() }));
+                            // Always explicitly send pause state — server starts paused by default
+                            ws.send(JSON.stringify({ command: 'pause', state: isVideoPaused }));
                         }
+                    } catch (err) {
+                        console.error("Error sending init commands:", err);
                     }
-                } catch (err) {
-                    console.error("Error sending init commands:", err);
-                }
-                return;
-            }
-
-            if (data.type === 'done') { currentWs.close(); return; }
-            if (data.error) { alert(data.error); return; }
-
-            if (data.type === 'frame') {
-                if (currentViewMode === 'side') {
-                    imgOrigSide.src = data.image_orig;
-                    imgSegSide.src = data.image;
-                } else if (currentViewMode === 'original') {
-                    imgSingle.src = data.image_orig;
-                } else {
-                    imgSingle.src = data.image;
+                    return;
                 }
 
-                metricFps.style.display = 'inline-flex';
-                metricFps.textContent = `⚡ ${data.fps} FPS`;
-                metricTime.style.display = 'inline-flex';
-                metricTime.textContent = `⏱️ ${data.time_ms}ms`;
+                if (data.type === 'done') { currentWs.close(); return; }
+                if (data.error) { alert(data.error); return; }
 
-                if (!isDraggingSlider) {
-                    videoSlider.value = data.frame_idx;
-                    videoTimeEl.textContent = `${data.frame_idx} / ${totalFrames}`;
+                if (data.type === 'frame') {
+                    if (currentViewMode === 'side') {
+                        imgOrigSide.src = data.image_orig;
+                        imgSegSide.src = data.image;
+                    } else if (currentViewMode === 'original') {
+                        imgSingle.src = data.image_orig;
+                    } else {
+                        imgSingle.src = data.image;
+                    }
+
+                    metricFps.style.display = 'inline-flex';
+                    metricFps.textContent = `⚡ ${data.fps} FPS`;
+                    metricTime.style.display = 'inline-flex';
+                    metricTime.textContent = `⏱️ ${data.time_ms}ms`;
+
+                    if (!isDraggingSlider) {
+                        videoSlider.value = data.frame_idx;
+                        videoTimeEl.textContent = `${data.frame_idx} / ${totalFrames}`;
+                    }
+
+                    const m = data.metrics;
+                    if (!m) { resetLiveMetrics(); return; }
+
+                    if (m.warming_up) {
+                        lmStatus.textContent = 'Warming Up…';
+                        lmStatus.className = 'lm-status warming';
+                        lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
+                        lmJitter.textContent = '—'; lmFlicker.textContent = '—';
+                    } else if (m.has_data) {
+                        lmStatus.textContent = 'Знайдено GT / Рахую';
+                        lmStatus.className = 'lm-status running';
+                        document.getElementById('lm-iou-cur').textContent = m.iou_cur != null ? m.iou_cur.toFixed(3) : '—';
+                        lmIouAvg.textContent = m.iou_avg != null ? m.iou_avg.toFixed(3) : '—';
+                        lmIouMin.textContent = m.iou_min != null ? m.iou_min.toFixed(3) : '—';
+                        lmJitter.textContent = m.jitter != null ? m.jitter.toFixed(1) : '—';
+                        lmFlicker.textContent = m.flicker != null ? m.flicker.toFixed(1) + '%' : '—';
+                    } else {
+                        lmStatus.textContent = 'Без GT';
+                        lmStatus.className = 'lm-status';
+                        document.getElementById('lm-iou-cur').textContent = '—';
+                        lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
+                        lmJitter.textContent = '—'; lmFlicker.textContent = '—';
+                    }
                 }
-
-                const m = data.metrics;
-                if (!m) { resetLiveMetrics(); return; }
-
-                if (m.warming_up) {
-                    lmStatus.textContent = 'Warming Up…';
-                    lmStatus.className = 'lm-status warming';
-                    lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
-                    lmJitter.textContent = '—'; lmFlicker.textContent = '—';
-                } else if (m.has_data) {
-                    lmStatus.textContent = 'Знайдено GT / Рахую';
-                    lmStatus.className = 'lm-status running';
-                    document.getElementById('lm-iou-cur').textContent = m.iou_cur.toFixed(3);
-                    lmIouAvg.textContent = m.iou_avg.toFixed(3);
-                    lmIouMin.textContent = m.iou_min.toFixed(3);
-                    lmJitter.textContent = m.jitter.toFixed(1);
-                    lmFlicker.textContent = m.flicker.toFixed(1) + '%';
-                } else {
-                    lmStatus.textContent = 'Без GT';
-                    lmStatus.className = 'lm-status';
-                    document.getElementById('lm-iou-cur').textContent = '—';
-                    lmIouAvg.textContent = '—'; lmIouMin.textContent = '—';
-                    lmJitter.textContent = '—'; lmFlicker.textContent = '—';
-                }
+            } catch (err) {
+                console.error("WebSocket message parsing or UI update error:", err, "Payload excerpt:", event.data.substring(0, 200));
             }
         };
 
         currentWs.onclose = () => {
-            currentWs = null;
-            videoScrubberContainer.style.display = 'none';
+            // Only null currentWs if it's still THIS connection.
+            // If a new WS was created before this onclose fired (race condition),
+            // we must NOT overwrite the new currentWs with null.
+            if (currentWs === thisWs) {
+                currentWs = null;
+                videoScrubberContainer.style.display = 'none';
+                videoSlider.value = 0;
+                totalFrames = 0;
+                videoTimeEl.textContent = '0 / 0';
+                btnPlayPause.textContent = '▶️';
+                resetLiveMetrics();
+            }
         };
     }
 
