@@ -283,6 +283,73 @@ class GenericEvaluator:
         return {'mIoU': mean_iou, 'precision': precision, 'recall': recall,
                 'f1': f1, 'avg_infer_ms': avg_ms}
 
+    def evaluate_mask_dataset(self, dataset_dir, iou_threshold=0.5, conf_threshold=0.5):
+        """
+        Evaluate on a dataset organized with 'images' and 'masks' directories.
+        Calculates mIoU, Precision, Recall, F1 directly against GT image masks.
+        """
+        base_dir = Path(dataset_dir)
+        img_dir = base_dir / 'images'
+        mask_dir = base_dir / 'masks'
+
+        if not img_dir.exists() or not mask_dir.exists():
+            print(f"Error: Dataset must contain 'images' and 'masks' subdirectories. Found: {img_dir.exists()} / {mask_dir.exists()}")
+            return None
+
+        images = list(img_dir.glob('*.jpg')) + list(img_dir.glob('*.png'))
+        print(f"Found {len(images)} images for validation in {dataset_dir}.")
+
+        all_ious, inference_times = [], []
+        total_tp, total_fp, total_fn = 0, 0, 0
+        iou_fn = self._iou_fn()
+
+        for img_path in images:
+            img = cv2.imread(str(img_path))
+            if img is None:
+                continue
+            h, w = img.shape[:2]
+
+            # Find matching mask. Try exact name or same stem.
+            mask_path = mask_dir / (img_path.stem + '.png')
+            if not mask_path.exists():
+                mask_path = mask_dir / img_path.name
+                if not mask_path.exists():
+                    # No GT mask found, assume empty GT
+                    gt_masks = []
+                else:
+                    gt_img = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                    gt_masks = [(cv2.resize(gt_img, (w, h), interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8)]
+            else:
+                gt_img = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                gt_masks = [(cv2.resize(gt_img, (w, h), interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8)]
+
+            t0 = time.perf_counter()
+            preds = self.model.predict(img, conf_threshold=conf_threshold)
+            inference_times.append((time.perf_counter() - t0) * 1000)
+
+            pred_list = preds.get('masks', []) if self.task == 'seg' else []
+            
+            # Since SmpModel returns a single global mask, and gt_masks is a single global mask,
+            # if either is empty, we handle it natively in _match_predictions.
+            # But wait, _match_predictions is greedy object matching. For semantic segmentation,
+            # global IoU (intersection over union of the entire mask) is often preferred.
+            # However, to keep metrics consistent with the rest of the evaluator, we use the greedy match.
+            tp, fp, fn, ious = _match_predictions(pred_list, gt_masks, iou_fn, iou_threshold)
+            total_tp += tp
+            total_fp += fp
+            total_fn += fn
+            all_ious.extend(ious)
+
+        mean_iou = float(np.mean(all_ious)) if all_ious else 0.0
+        precision, recall = calculate_precision_recall(total_tp, total_fp, total_fn)
+        f1 = calculate_f1_score(precision, recall)
+        avg_ms = float(np.mean(inference_times)) if inference_times else 0.0
+
+        self._print_dataset_results(mean_iou, precision, recall, f1, avg_ms, iou_threshold)
+        return {'mIoU': mean_iou, 'precision': precision, 'recall': recall,
+                'f1': f1, 'avg_infer_ms': avg_ms}
+
+
     # ── Single image ─────────────────────────────────────────────────────────
     def evaluate_single(self, source_path, save_dir=None):
         """Run inference on a single image/video and save result."""

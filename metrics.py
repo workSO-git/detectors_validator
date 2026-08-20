@@ -24,15 +24,16 @@ def compute_box_iou(box1, box2):
 def compute_mask_iou(mask1, mask2):
     """
     Compute Intersection over Union (IoU) of two binary masks.
+    Returns 1.0 when both masks are empty (true negative — both agree there's nothing).
     """
     mask1 = mask1 > 0
     mask2 = mask2 > 0
-    
+
     intersection = np.logical_and(mask1, mask2).sum()
     union = np.logical_or(mask1, mask2).sum()
-    
+
     if union == 0:
-        return 0.0
+        return 1.0  # Both masks empty = perfect agreement (true negative)
     return intersection / union
 
 def calculate_precision_recall(tp, fp, fn):

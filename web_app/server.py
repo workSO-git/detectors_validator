@@ -48,6 +48,28 @@ sys.path.append(str(parent_dir))
 from evaluator import polygon_to_mask, box_to_absolute, _load_gt_from_file, _load_gt_from_json, _match_predictions
 from metrics import compute_mask_iou, compute_box_iou, get_mask_centroid, get_box_centroid, calculate_jitter, calculate_flicker_rate, calculate_precision_recall, calculate_f1_score
 
+def _load_gt_from_mask_png(masks_dir: Path, stem: str, w: int, h: int):
+    """Load a binary PNG mask as GT (for ResNet/SMP-style datasets with image+mask pairs).
+    Searches for stem.png (or stem.jpg) inside masks_dir or its sibling 'masks/' folder."""
+    # Support: user gives the parent dir (with images/ and masks/ inside)
+    candidates_dirs = [masks_dir]
+    if (masks_dir / 'masks').is_dir():
+        candidates_dirs.append(masks_dir / 'masks')
+    if masks_dir.name != 'masks' and masks_dir.parent.is_dir():
+        sibling_masks = masks_dir.parent / 'masks'
+        if sibling_masks.is_dir():
+            candidates_dirs.append(sibling_masks)
+
+    for d in candidates_dirs:
+        for ext in ['.png', '.jpg', '.jpeg', '.bmp']:
+            mask_path = d / (stem + ext)
+            if mask_path.exists():
+                gt_img = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                if gt_img is not None:
+                    mask = (cv2.resize(gt_img, (w, h), interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8)
+                    return [mask], True
+    return [], False
+
 TEMP_DIR = current_dir / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
 
@@ -115,6 +137,55 @@ AVAILABLE_MODELS = [
         "model_type": "yolo",
         "model_path": r"C:\Users\Sasha\projects\CV\models_extracted\models\best.pt",
         "task": "seg"
+    },
+    {
+        "id": "smp_reznet",
+        "name": "SMP ResNet (Best Sky - Base)",
+        "model_type": "reznet",
+        "model_path": r"C:\Users\Sasha\projects\CV\best_sky_model.pth",
+        "task": "seg"
+    },
+    {
+        "id": "smp_reznet_ts",
+        "name": "SMP ResNet (TorchScript - 100+ FPS)",
+        "model_type": "reznet",
+        "model_path": r"C:\Users\Sasha\projects\CV\best_sky_model_ts.pt",
+        "task": "seg"
+    },
+    {
+        "id": "smp_reznet_onnx",
+        "name": "SMP ResNet (ONNX Runtime)",
+        "model_type": "reznet",
+        "model_path": r"C:\Users\Sasha\projects\CV\best_sky_model.onnx",
+        "task": "seg"
+    },
+    {
+        "id": "cv_horizon",
+        "name": "OpenCV Horizon Detection (Algorithm)",
+        "model_type": "horizon",
+        "model_path": "algorithm",
+        "task": "seg"
+    },
+    {
+        "id": "cv_horizon_tracker",
+        "name": "Horizon Tracking (Optical Flow)",
+        "model_type": "tracker",
+        "model_path": "algorithm",
+        "task": "seg"
+    },
+    {
+        "id": "depth_anything",
+        "name": "Depth-Anything V2 (Near)",
+        "model_type": "depth",
+        "model_path": "none",
+        "task": "seg"
+    },
+    {
+        "id": "dinov2_mlp",
+        "name": "DINOv2 MLP (Best Sky - 94% IoU)",
+        "model_type": "dinov2",
+        "model_path": r"C:\Users\Sasha\projects\CV\best_dinov2_mlp_model.pth",
+        "task": "seg"
     }
 ]
 
@@ -152,7 +223,11 @@ def perform_inference_and_draw(model_adapter, img):
     Returns: (img_all, img_masks, img_boxes, inf_time_ms, num_objects, raw_results)
     """
     import time
-    if hasattr(model_adapter, 'model') and hasattr(model_adapter.model, 'predict'):
+    is_yolo = type(model_adapter).__name__ == 'YoloModel'
+    if not is_yolo and hasattr(model_adapter, 'model') and type(model_adapter.model).__name__ == 'YOLO':
+        is_yolo = True
+
+    if is_yolo:
         # YOLO specific fast-path with built-in plotting
         results = model_adapter.model.predict(img, conf=0.25, verbose=False, retina_masks=True)
         res = results[0]
@@ -227,50 +302,28 @@ async def set_model(model_id: str = Form(...)):
         print(f"Error switching model: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.get("/api/pick_folder")
-async def pick_folder():
-    """Open a native OS folder picker dialog and return the selected path."""
-    import tkinter as tk
-    from tkinter import filedialog
-
-    def _open_dialog():
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes('-topmost', True)
-        folder = filedialog.askdirectory(title="Виберіть теку")
-        root.destroy()
-        return folder or ""
-
-    loop = asyncio.get_event_loop()
-    path = await loop.run_in_executor(None, _open_dialog)
-    return {"path": path}
+import subprocess
 
 @app.get("/api/pick_file")
 async def pick_file(video: int = 0):
-    """Open a native OS file picker dialog for YAML/JSON files or videos."""
-    import tkinter as tk
-    from tkinter import filedialog
-
-    def _open_dialog():
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes('-topmost', True)
-        if video:
-            file_path = filedialog.askopenfilename(
-                title="Виберіть відеофайл",
-                filetypes=[("Video files", "*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.ts"), ("All files", "*.*")]
-            )
-        else:
-            file_path = filedialog.askopenfilename(
-                title="Виберіть dataset.yaml або .json",
-                filetypes=[("YAML / JSON", "*.yaml *.yml *.json"), ("All files", "*.*")]
-            )
-        root.destroy()
-        return file_path or ""
-
-    loop = asyncio.get_event_loop()
-    path = await loop.run_in_executor(None, _open_dialog)
-    return {"path": path}
+    script = f"""
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+root.wm_attributes('-topmost', True)
+if {video}:
+    p = filedialog.askopenfilename(title='Виберіть відеофайл', filetypes=[('Video', '*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.ts'), ('All', '*.*')])
+else:
+    p = filedialog.askopenfilename(title='Виберіть dataset.yaml або .json', filetypes=[('YAML/JSON', '*.yaml *.yml *.json'), ('All', '*.*')])
+print(p)
+"""
+    try:
+        import sys
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        return {"path": result.stdout.strip()}
+    except Exception:
+        return {"path": ""}
 
 def resolve_label_file(labels_path: Path, stem: str) -> Path:
     """Resolve the .txt label file for a given image/frame stem, supporting dataset.yaml paths."""
@@ -343,15 +396,41 @@ async def process_image(
         if labels_dir.strip():
             stem        = Path(file.filename).stem
             labels_path = Path(labels_dir.strip())
-            
+
+            print(f"[GT DEBUG] filename={file.filename}, stem={stem}")
+            print(f"[GT DEBUG] labels_path={labels_path}, suffix={labels_path.suffix}, is_dir={labels_path.is_dir()}, exists={labels_path.exists()}")
+
             gt_masks, gt_boxes = [], []
             lbl_file = None
             has_gt_annotation = False
-            
+
             if labels_path.suffix.lower() == '.json':
+                print(f"[GT DEBUG] → JSON branch")
                 gt_masks, gt_boxes, has_gt_annotation = _load_gt_from_json(labels_path, file.filename, w, h, model.task)
+            elif labels_path.is_dir():
+                is_masks_dir = (
+                    labels_path.name == 'masks' or
+                    (labels_path / 'masks').is_dir()
+                )
+                # Only scan first level for txt to avoid slow rglob on large dirs
+                has_txt_labels = any(labels_path.glob('*.txt'))
+                print(f"[GT DEBUG] → DIR branch: is_masks_dir={is_masks_dir}, has_txt_labels={has_txt_labels}")
+
+                if is_masks_dir and not has_txt_labels:
+                    print(f"[GT DEBUG] → PNG mask branch, looking for {stem}.*")
+                    gt_masks, has_gt_annotation = _load_gt_from_mask_png(labels_path, stem, w, h)
+                    print(f"[GT DEBUG] PNG mask result: found={has_gt_annotation}, masks={len(gt_masks)}")
+                else:
+                    # Standard YOLO .txt labels directory
+                    lbl_file = resolve_label_file(labels_path, stem)
+                    print(f"[GT DEBUG] → TXT branch: lbl_file={lbl_file}, exists={lbl_file.exists() if lbl_file else False}")
+                    if lbl_file and lbl_file.exists():
+                        gt_masks, gt_boxes = _load_gt_from_file(lbl_file, model.task, w, h)
+                        has_gt_annotation = True
             else:
+                # It's a file (yaml, etc)
                 lbl_file = resolve_label_file(labels_path, stem)
+                print(f"[GT DEBUG] → FILE branch: lbl_file={lbl_file}")
                 if lbl_file and lbl_file.exists():
                     gt_masks, gt_boxes = _load_gt_from_file(lbl_file, model.task, w, h)
                     has_gt_annotation = True

@@ -6,3 +6,5 @@ external_paths:
   ignore: "../ignore"
   # Video_Interface_detection_investigation project
   interface_investigation: "../Video_Interface_detection_investigation"
+  # DINOv2 + MLP Head model weights (sky segmentation)
+  dinov2_mlp_model: "../best_dinov2_mlp_model.pth"
