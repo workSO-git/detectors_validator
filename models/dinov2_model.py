@@ -57,7 +57,7 @@ class _DinoV2SegModel(nn.Module):
     PATCH_SIZE = 14
     EMBED_DIM = 384  # dinov2_vits14
 
-    def __init__(self):
+    def __init__(self, num_classes: int = 1):
         super().__init__()
         # Завантажуємо backbone через torch.hub (може закешуватись локально)
         self.backbone = torch.hub.load(
@@ -65,7 +65,7 @@ class _DinoV2SegModel(nn.Module):
             "dinov2_vits14",
             pretrained=False,  # ваги завантажуємо зі свого .pth файлу
         )
-        self.head = _MlpHead(in_channels=self.EMBED_DIM)
+        self.head = _MlpHead(in_channels=self.EMBED_DIM, num_classes=num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -133,20 +133,22 @@ class DINOv2MlpModel(BaseModel):
         if not model_path.exists():
             raise FileNotFoundError(f"[DINOv2MlpModel] Файл не знайдено: {model_path}")
 
-        # Ініціалізуємо архітектуру
-        self.model = _DinoV2SegModel()
-
         # Завантажуємо ваги
         state = torch.load(str(model_path), map_location=self.device)
 
         # Підтримуємо як state_dict, так і повну модель
         if isinstance(state, dict):
-            # Якщо збережено у checkpoint-форматі {'model_state_dict': ...}
             if "model_state_dict" in state:
                 state = state["model_state_dict"]
+                
+            # Автоматично визначаємо кількість класів з ваг голови
+            num_classes = 1
+            if "head.6.weight" in state:
+                num_classes = state["head.6.weight"].shape[0]
+                
+            self.model = _DinoV2SegModel(num_classes=num_classes)
             self.model.load_state_dict(state, strict=True)
         else:
-            # Збережено як повний об'єкт моделі — малоймовірно, але на всяк випадок
             self.model = state
 
         self.model.to(self.device)
@@ -198,19 +200,35 @@ class DINOv2MlpModel(BaseModel):
         tensor = self._preprocess(img)
 
         with torch.no_grad():
-            logits = self.model(tensor)               # (1, 1, H_in, W_in)
+            logits = self.model(tensor)               # (1, C, H_in, W_in)
+            
+        num_classes = logits.shape[1]
+        
+        if num_classes == 1:
             probs = torch.sigmoid(logits).squeeze(0).squeeze(0).cpu().numpy()
-
-        # Бінарна маска у просторі входу мережі
-        mask_net = (probs >= conf_threshold).astype(np.uint8)
-
-        # Повертаємо до оригінального розміру
-        mask = cv2.resize(mask_net, (w, h), interpolation=cv2.INTER_NEAREST)
+            mask_net = (probs >= conf_threshold).astype(np.uint8)
+            mask = cv2.resize(mask_net, (w, h), interpolation=cv2.INTER_NEAREST)
+            masks = [mask]
+            classes = [0]
+        else:
+            # Багатокласова сегментація (напр. 3 класи)
+            probs = torch.softmax(logits, dim=1).squeeze(0).cpu().numpy()
+            pred_classes = np.argmax(probs, axis=0).astype(np.uint8)
+            pred_classes_resized = cv2.resize(pred_classes, (w, h), interpolation=cv2.INTER_NEAREST)
+            
+            masks = []
+            classes = []
+            # Повертаємо окремі бінарні маски для кожного знайденого класу (окрім фону = 0)
+            for c in range(1, num_classes):
+                class_mask = (pred_classes_resized == c).astype(np.uint8)
+                if np.any(class_mask):
+                    masks.append(class_mask)
+                    classes.append(c)
 
         return {
-            "masks":   [mask],
+            "masks":   masks,
             "boxes":   [],
-            "classes": [0],
+            "classes": classes,
         }
 
     # ── Predict & Save ────────────────────────────────────────────────────────

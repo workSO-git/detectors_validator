@@ -186,6 +186,13 @@ AVAILABLE_MODELS = [
         "model_type": "dinov2",
         "model_path": r"C:\Users\Sasha\projects\CV\best_dinov2_mlp_model.pth",
         "task": "seg"
+    },
+    {
+        "id": "dinov2_mlp_3class",
+        "name": "DINOv2 MLP (3-Class)",
+        "model_type": "dinov2",
+        "model_path": r"C:\Users\Sasha\projects\CV\best_dinov2_3class_model.pth",
+        "task": "seg"
     }
 ]
 
@@ -251,11 +258,27 @@ def perform_inference_and_draw(model_adapter, img):
         img_masks = img.copy()
         img_boxes = img.copy()
         
+        classes = preds.get('classes', [])
+        if not classes or len(classes) != len(masks):
+            classes = [0] * len(masks) # fallback
+            
+        palette = {
+            1: (255, 100, 0),   # Class 1 (e.g. Sky) -> Blue
+            2: (0, 0, 255),     # Class 2 (e.g. Interface) -> Red
+            3: (0, 255, 0),     # Class 3 -> Green
+            4: (0, 255, 255),   # Class 4 -> Yellow
+            5: (255, 0, 255)    # Class 5 -> Purple
+        }
+        
         # Draw masks
-        for m in masks:
+        for i, m in enumerate(masks):
             if isinstance(m, np.ndarray):
+                cls_idx = classes[i]
+                # Fallback to red for unknown classes or class 0
+                color = palette.get(cls_idx, (0, 0, 255)) if cls_idx != 0 else (0, 0, 255)
+                
                 colored_mask = np.zeros_like(img, dtype=np.uint8)
-                colored_mask[m > 0] = (0, 0, 255) # Red mask
+                colored_mask[m > 0] = color
                 cv2.addWeighted(colored_mask, 0.5, img_all, 1.0, 0, img_all)
                 cv2.addWeighted(colored_mask, 0.5, img_masks, 1.0, 0, img_masks)
                 
