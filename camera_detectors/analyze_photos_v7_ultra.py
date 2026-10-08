@@ -148,9 +148,9 @@ def refine_cell_y_v7(img: np.ndarray, cell_x: int, cell_w: int, default_top: int
         post_mono = span_mean(cum_mono, r, min(h, r + 20))
         mono_drop = max(0.0, pre_mono - post_mono)
 
-        if line < 0.05 and mono_drop < 0.12 and not (pre_std < 1.5 and post_std > 5.0):
-            continue
-        if default_top > 50 and abs(r - default_top) > 45 and line < 0.40:
+        # Option 2: If default_top is locked from a vertical split divider (default_top >= 35),
+        # ignore deeper horizontal candidates r > default_top + 15 as internal scene horizons!
+        if default_top >= 35 and r > default_top + 15 and line < 0.40:
             continue
         if default_top > 50 and r < default_top - 25:
             continue
@@ -220,8 +220,8 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
     gray = cv2.cvtColor(img_proc, cv2.COLOR_BGR2GRAY)
     
     # 1. Fast Sobel operations
-    sobel_x = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
-    sobel_y = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
+    sobel_x = np.abs(cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3))
+    sobel_y = np.abs(cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3))
 
     row_stds = gray.std(axis=1)
     col_stds = gray.std(axis=0)
@@ -381,19 +381,47 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
         l_top_y, l_h = refine_cell_y_v7(img_proc, left_x, 640 - left_x, default_top=top_y, default_bot=bot_y, pre_gray=gray, pre_sobel_y=sobel_y, pre_mono_m=mono_m)
         r_top_y, r_h = refine_cell_y_v7(img_proc, 640, right_x - 640, default_top=top_y, default_bot=bot_y, pre_gray=gray, pre_sobel_y=sobel_y, pre_mono_m=mono_m)
 
+        l_bot_y = l_top_y + l_h
+        r_bot_y = r_top_y + r_h
+
         left_act = float(gray[l_top_y:l_top_y+l_h, left_x:640].std())
         right_act = float(gray[r_top_y:r_top_y+r_h, 640:right_x].std())
+
+        # 1. Enforce shared top boundary across dual cameras when both are active or difference is minor (<=25px)
+        if abs(l_top_y - r_top_y) <= 25 or (left_act > 15.0 and right_act > 15.0):
+            shared_top = min(l_top_y, r_top_y)
+            l_top_y = shared_top
+            r_top_y = shared_top
+
+        # 2. Enforce shared bottom if one camera drifted to image bottom (h) or difference is minor (<=15px)
+        if abs(l_bot_y - r_bot_y) <= 15:
+            shared_bot = min(l_bot_y, r_bot_y)
+            l_h = shared_bot - l_top_y
+            r_h = shared_bot - r_top_y
+        elif l_bot_y >= h - 5 and r_bot_y < h - 20:
+            l_h = r_bot_y - l_top_y
+            r_h = r_bot_y - r_top_y
+        elif r_bot_y >= h - 5 and l_bot_y < h - 20:
+            l_h = l_bot_y - l_top_y
+            r_h = l_bot_y - r_top_y
+        else:
+            l_h = l_bot_y - l_top_y
+            r_h = r_bot_y - r_top_y
 
         cell_left = CameraRegion(x=left_x, y=l_top_y, w=640-left_x, h=l_h, area=(640-left_x)*l_h, activity=left_act, center_x=(left_x+640)/2.0, center_y=l_top_y+l_h/2.0, rank=1)
         cell_right = CameraRegion(x=640, y=r_top_y, w=right_x-640, h=r_h, area=(right_x-640)*r_h, activity=right_act, center_x=(640+right_x)/2.0, center_y=r_top_y+r_h/2.0, rank=2)
 
+        # 3. Rank active camera: default cell_left, swap to cell_right if left is dark or right is significantly more active
         if (left_act < 15.0 and right_act > 30.0) or (right_act > left_act + 50.0):
             cell_right.rank = 1
             cell_left.rank = 2
             rois = [cell_right, cell_left]
         else:
+            cell_left.rank = 1
+            cell_right.rank = 2
             rois = [cell_left, cell_right]
 
+        rois = _apply_smart_telemetry_guard(rois, gray, h, w)
         return _scale_rois_if_needed(rois, scale)
 
     # SINGLE-CAM LAYOUT BRANCH WITH TRANSLUCENT HUD OVERLAY REFinement
@@ -421,7 +449,27 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
     act = float(gray[top_y:bot_y, left_x:right_x].std())
     main_reg = CameraRegion(x=left_x, y=top_y, w=main_w, h=main_h, area=main_w*main_h, activity=act, center_x=(left_x+right_x)/2.0, center_y=(top_y+bot_y)/2.0, rank=1)
     rois = [main_reg]
+    rois = _apply_smart_telemetry_guard(rois, gray, h, w)
     return _scale_rois_if_needed(rois, scale)
+
+
+def _apply_smart_telemetry_guard(rois: List[CameraRegion], gray: np.ndarray, h: int, w: int) -> List[CameraRegion]:
+    for r in rois:
+        if r.y >= 150 and r.y + r.h > 580:
+            sub_w = max(10, r.w)
+            sub_x1 = max(0, r.x)
+            sub_x2 = min(w, r.x + sub_w)
+            if sub_x2 > sub_x1 and h >= 600:
+                spacer_means = gray[535:560, sub_x1:sub_x2].mean(axis=1)
+                widget_stds = gray[560:min(h, 600), sub_x1:sub_x2].std(axis=1)
+                if (spacer_means < 25.0).any() and (widget_stds > 30.0).any():
+                    min_rel_y = int(np.argmin(spacer_means))
+                    target_bot = 535 + min_rel_y
+                    new_h = max(100, target_bot - r.y)
+                    r.h = new_h
+                    r.area = r.w * r.h
+                    r.center_y = r.y + r.h / 2.0
+    return rois
 
 
 def _scale_rois_if_needed(rois: List[CameraRegion], scale: float) -> List[CameraRegion]:

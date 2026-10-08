@@ -372,14 +372,16 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
         cell_left = CameraRegion(x=left_x, y=l_top_y, w=640-left_x, h=l_h, area=(640-left_x)*l_h, activity=left_act, center_x=(left_x+640)/2.0, center_y=l_top_y+l_h/2.0, rank=1)
         cell_right = CameraRegion(x=640, y=r_top_y, w=right_x-640, h=r_h, area=(right_x-640)*r_h, activity=right_act, center_x=(640+right_x)/2.0, center_y=r_top_y+r_h/2.0, rank=2)
 
-        if right_act > left_act:
+        if (left_act < 15.0 and right_act > 30.0) or (right_act > left_act + 50.0):
             cell_right.rank = 1
             cell_left.rank = 2
-            return [cell_right, cell_left]
+            rois = [cell_right, cell_left]
         else:
             cell_left.rank = 1
             cell_right.rank = 2
-            return [cell_left, cell_right]
+            rois = [cell_left, cell_right]
+
+        return _apply_smart_telemetry_guard(rois, gray, h, w)
 
     # SINGLE-CAM LAYOUT BRANCH WITH TRANSLUCENT HUD OVERLAY REFINEMENT
     main_w = right_x - left_x
@@ -405,7 +407,28 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
 
     act = get_cell_activity(gray[top_y:bot_y, left_x:right_x])
     main_reg = CameraRegion(x=left_x, y=top_y, w=main_w, h=main_h, area=main_w*main_h, activity=act, center_x=(left_x+right_x)/2.0, center_y=(top_y+bot_y)/2.0, rank=1)
-    return [main_reg]
+    rois = [main_reg]
+    rois = _apply_smart_telemetry_guard(rois, gray, h, w)
+    return rois
+
+
+def _apply_smart_telemetry_guard(rois: List[CameraRegion], gray: np.ndarray, h: int, w: int) -> List[CameraRegion]:
+    for r in rois:
+        if r.y >= 150 and r.y + r.h > 580:
+            sub_w = max(10, r.w)
+            sub_x1 = max(0, r.x)
+            sub_x2 = min(w, r.x + sub_w)
+            if sub_x2 > sub_x1 and h >= 600:
+                spacer_means = gray[535:560, sub_x1:sub_x2].mean(axis=1)
+                widget_stds = gray[560:min(h, 600), sub_x1:sub_x2].std(axis=1)
+                if (spacer_means < 25.0).any() and (widget_stds > 30.0).any():
+                    min_rel_y = int(np.argmin(spacer_means))
+                    target_bot = 535 + min_rel_y
+                    new_h = max(100, target_bot - r.y)
+                    r.h = new_h
+                    r.area = r.w * r.h
+                    r.center_y = r.y + r.h / 2.0
+    return rois
 
 
 class VideoCameraDetector:

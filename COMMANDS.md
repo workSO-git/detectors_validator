@@ -1,9 +1,9 @@
 # COMMANDS — Команди для запуску оцінки моделей
 
-Всі команди запускаються з кореневої папки проекту:
-```
-cd C:\Users\Sasha\projects\CV\yolo_evaluator
-```
+Всі команди запускаються з кореневої папки проекту.
+
+> **Перед запуском:** скопіюйте `.env.example` → `.env` і заповніть шляхи до ваг.
+> Замініть `<MODELS_DIR>` та `<DATA_DIR>` на реальні шляхи у вашій системі.
 
 ---
 
@@ -22,9 +22,9 @@ python -m uvicorn web_app.server:app --reload --port 8000
 ```powershell
 python main.py --mode video_eval `
   --model-type yolo `
-  --model "C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt" `
-  --source "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4" `
-  --labels "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json" `
+  --model "<MODELS_DIR>\yolo_det\weights\best.pt" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --labels "<DATA_DIR>\videos\my_video_gt.json" `
   --task det
 ```
 
@@ -32,143 +32,157 @@ python main.py --mode video_eval `
 ```powershell
 python main.py --mode video_eval `
   --model-type yolo `
-  --model "C:\Users\Sasha\projects\CV\models_extracted\models\best.pt" `
-  --source "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4" `
-  --labels "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json" `
+  --model "<MODELS_DIR>\yolo_seg\weights\best.pt" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --labels "<DATA_DIR>\videos\my_video_gt.json" `
   --task seg
 ```
 
-### EMA Detector (Interface, детектор зон ігнорування)
+### EMA Detector (Interface / VIDI)
 ```powershell
 python main.py --mode video_eval `
   --model-type interface `
   --model "{'detector_module': 'detectors.ema_detector', 'detector_class': 'EMADetector'}" `
-  --source "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4" `
-  --labels "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --labels "<DATA_DIR>\videos\my_video_gt.json" `
   --task det
 ```
 
-### GMM Detector (Interface)
+### GMM Detector (Interface / VIDI)
 ```powershell
 python main.py --mode video_eval `
   --model-type interface `
   --model "{'detector_module': 'detectors.gmm_detector', 'detector_class': 'GMMDetector'}" `
-  --source "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4" `
-  --labels "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --labels "<DATA_DIR>\videos\my_video_gt.json" `
   --task det
 ```
 
-### Geometric Detector (Interface)
+### Geometric Detector (Interface / VIDI)
 ```powershell
 python main.py --mode video_eval `
   --model-type interface `
   --model "{'detector_module': 'detectors.geometric_detector', 'detector_class': 'GeometricDetector'}" `
-  --source "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4" `
-  --labels "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --labels "<DATA_DIR>\videos\my_video_gt.json" `
   --task det
 ```
 
-### YOLO Interface Detector (через VIDI-обгортку)
+### YOLO через VIDI-обгортку (YOLOInterfaceDetector)
 ```powershell
 python main.py --mode video_eval `
   --model-type interface `
-  --model "{'detector_module': 'detectors.yolo_interface_detector', 'detector_class': 'YOLOInterfaceDetector', 'model_path': 'C:\\Users\\Sasha\\projects\\CV\\det_pipeline\\runs\\drone_det_n\\weights\\best.pt'}" `
-  --source "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4" `
-  --labels "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json" `
+  --model "{'detector_module': 'detectors.yolo_interface_detector', 'detector_class': 'YOLOInterfaceDetector', 'model_path': '<MODELS_DIR>\\yolo_det\\weights\\best.pt'}" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --labels "<DATA_DIR>\videos\my_video_gt.json" `
   --task det
 ```
 
-### IgnoreAdapter (навчається прямо на відео перед оцінкою)
+### IgnoreAdapter (навчається на відео перед оцінкою)
 ```powershell
 python main.py --mode video_eval `
   --model-type ignore `
-  --model "{'detector_module': 'detectors.ema_detector', 'detector_class': 'EMADetector'}" `
-  --source "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4" `
-  --labels "C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json" `
+  --model none `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --labels "<DATA_DIR>\videos\my_video_gt.json" `
   --task ignore
+```
+
+### Depth-Anything V2 (auto-download з HuggingFace)
+```powershell
+python main.py --mode video_eval `
+  --model-type depth `
+  --model none `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --task seg `
+  --depth-threshold 0.5
+```
+
+### DINOv2 MLP Head
+```powershell
+python main.py --mode video_eval `
+  --model-type dinov2 `
+  --model "<MODELS_DIR>\best_dinov2_mlp_model.pth" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --task seg
+```
+
+### SMP ResNet
+```powershell
+python main.py --mode video_eval `
+  --model-type reznet `
+  --model "<MODELS_DIR>\best_sky_model.pth" `
+  --source "<DATA_DIR>\videos\my_video.mp4" `
+  --task seg
 ```
 
 ---
 
 ## 📂 Тестування на ДАТАСЕТАХ (`--mode dataset`)
 
-### YOLO Object Detection — датасет детекції
+### YOLO Detection — датасет у форматі YOLO
 ```powershell
 python main.py --mode dataset `
   --model-type yolo `
-  --model "C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt" `
-  --source "C:\Users\Sasha\projects\CV\det_dataset" `
+  --model "<MODELS_DIR>\yolo_det\weights\best.pt" `
+  --source "<DATA_DIR>\det_dataset" `
   --task det `
   --split val
 ```
 
-### YOLO Segmentation — датасет сегментації
+### YOLO Segmentation
 ```powershell
 python main.py --mode dataset `
   --model-type yolo `
-  --model "C:\Users\Sasha\projects\CV\models_extracted\models\best.pt" `
-  --source "C:\Users\Sasha\projects\CV\yolo_seg_dataset\yolo_seg_dataset" `
+  --model "<MODELS_DIR>\yolo_seg\weights\best.pt" `
+  --source "<DATA_DIR>\seg_dataset" `
   --task seg `
   --split val
 ```
 
-### YOLO Detection — датасет пайплайну (train split)
+### SMP ResNet — датасет images+masks
 ```powershell
-python main.py --mode dataset `
-  --model-type yolo `
-  --model "C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt" `
-  --source "C:\Users\Sasha\projects\CV\det_dataset" `
-  --task det `
-  --split train
-```
-
-### EMA Detector — на датасеті пайплайну (через JSON розмітку)
-```powershell
-python main.py --mode dataset `
-  --model-type interface `
-  --model "{'detector_module': 'detectors.ema_detector', 'detector_class': 'EMADetector'}" `
-  --source "C:\Users\Sasha\projects\CV\det_dataset" `
-  --labels "C:\Users\Sasha\projects\CV\db_task\merged.json" `
-  --task det `
-  --split val
+python main.py --mode mask_dataset `
+  --model-type reznet `
+  --model "<MODELS_DIR>\best_sky_model.pth" `
+  --source "<DATA_DIR>\sky_dataset" `
+  --task seg
 ```
 
 ---
 
 ## 🖼️ Тестування одного ЗОБРАЖЕННЯ (`--mode single`)
 
-### YOLO (одне фото)
+### YOLO
 ```powershell
 python main.py --mode single `
   --model-type yolo `
-  --model "C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt" `
-  --source "C:\шлях\до\фото.jpg" `
-  --task det
+  --model "<MODELS_DIR>\yolo_det\weights\best.pt" `
+  --source "<DATA_DIR>\images\frame.jpg" `
+  --task det `
+  --save-dir results\
 ```
 
-### EMA Detector (одне фото)
+### DINOv2
 ```powershell
 python main.py --mode single `
-  --model-type interface `
-  --model "{'detector_module': 'detectors.ema_detector', 'detector_class': 'EMADetector'}" `
-  --source "C:\шлях\до\фото.jpg" `
-  --task det
+  --model-type dinov2 `
+  --model "<MODELS_DIR>\best_dinov2_mlp_model.pth" `
+  --source "<DATA_DIR>\images\frame.jpg" `
+  --task seg `
+  --save-dir results\
 ```
 
----
-
-## 📌 Шляхи до ресурсів
-
-| Ресурс | Шлях |
-|--------|------|
-| YOLO nano det модель | `C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt` |
-| YOLO seg модель | `C:\Users\Sasha\projects\CV\models_extracted\models\best.pt` |
-| Відео для тесту | `C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043.mp4` |
-| GT для відео (JSON) | `C:\Users\Sasha\projects\CV\drone-videos\drone-videos\signal-2026-07-02-15-19-19-043_gt.json` |
-| GT загальний (JSON) | `C:\Users\Sasha\projects\CV\db_task\merged.json` |
-| Датасет детекції | `C:\Users\Sasha\projects\CV\det_dataset` |
-| Датасет сегментації | `C:\Users\Sasha\projects\CV\yolo_seg_dataset\yolo_seg_dataset` |
-| VIDI проект (інтерфейс) | `C:\Users\Sasha\projects\CV\Video_Interface_detection_investigation` |
+### Depth-Anything V2
+```powershell
+python main.py --mode single `
+  --model-type depth `
+  --model none `
+  --source "<DATA_DIR>\images\frame.jpg" `
+  --task seg `
+  --depth-threshold 0.4 `
+  --save-dir results\
+```
 
 ---
 
@@ -176,12 +190,14 @@ python main.py --mode single `
 
 | Параметр | Значення | Опис |
 |----------|----------|------|
-| `--mode` | `dataset` / `single` / `video_eval` | Режим оцінки |
-| `--model-type` | `yolo` / `interface` / `ignore` | Тип адаптера |
-| `--model` | шлях або dict | Шлях до `.pt` або конфіг детектора |
-| `--source` | шлях | Папка датасету, файл відео або фото |
-| `--labels` | шлях | GT розмітка (.json, .yaml, або папка) |
+| `--mode` | `dataset` / `mask_dataset` / `single` / `video_eval` | Режим оцінки |
+| `--model-type` | `yolo` / `reznet` / `dinov2` / `depth` / `interface` / `ignore` / `horizon` / `tracker` | Тип адаптера |
+| `--model` | шлях або dict-рядок | Шлях до `.pt`/`.pth`/`.onnx` або конфіг детектора |
+| `--source` | шлях | Папка датасету, відеофайл або зображення |
+| `--labels` | шлях | GT-розмітка (`.json`, `.yaml` або папка з `.txt`) |
 | `--task` | `det` / `seg` / `ignore` | Тип задачі |
-| `--split` | `train` / `val` / `test` | Сплітдатасету (тільки для `dataset`) |
+| `--split` | `train` / `val` / `test` | Сплін датасету (тільки для `dataset`) |
 | `--save-dir` | шлях | Куди зберігати результати |
-| `--iou-thresh` | 0.0–1.0 | Поріг IoU для TP/FP (за замовч. 0.5) |
+| `--iou-thresh` | `0.0–1.0` | Поріг IoU для TP/FP (за замовч. `0.5`) |
+| `--depth-threshold` | `0.0–1.0` | [depth] Поріг ближніх об'єктів (за замовч. `0.5`) |
+| `--depth-invert` | flag | [depth] Вибирати ДАЛЕКІ об'єкти замість ближніх |

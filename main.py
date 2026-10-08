@@ -46,7 +46,6 @@ def get_model_adapter(model_type, model_path, task, _depth_threshold=0.5, _depth
             adapter = InterfaceAdapter({'detector_module': mod, 'detector_class': cls})
     elif model_type == 'depth':
         from models.depth_anything_model import DepthAnythingModel
-        import argparse
         # model_path can be a local cache dir or None/'none' to use HuggingFace auto-download
         local_path = model_path if (model_path and model_path.lower() != 'none') else None
         adapter = DepthAnythingModel(

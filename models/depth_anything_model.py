@@ -24,8 +24,9 @@ class DepthAnythingModel(BaseModel):
     def __init__(self, model_path=None, task='seg', depth_threshold=0.5, invert=False):
         """
         Args:
-            model_path: Ignored (model is auto-downloaded from HuggingFace).
-                        Can optionally be a local path to a cached model dir.
+            model_path: Optional path to a locally cached HuggingFace model directory.
+                        If None or 'none', the model is auto-downloaded from HuggingFace
+                        (depth-anything/Depth-Anything-V2-Small-hf) and cached by transformers.
             task: Always 'seg' for this model (produces a mask).
             depth_threshold: Normalized [0..1] threshold.
                              Pixels with relative depth >= threshold are treated as foreground.

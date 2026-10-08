@@ -133,11 +133,18 @@ def _load_gt_from_json(json_path, filename, width, height, task='seg'):
     if not image_data:
         return gt_masks, gt_boxes, False
 
-    # The JSON annotations were drawn on 1280x720 resolution images.
-    # We must scale them to the actual uploaded image dimensions.
-    scale_x = width / 1280.0
-    scale_y = height / 720.0
-    print(f"DEBUG: Scaled JSON polygons for {filename} by {scale_x}x{scale_y}")
+    # The JSON annotations may have been drawn on a resolution that differs from
+    # the currently processed image. Scale coordinates accordingly.
+    # The JSON should contain an 'annotation_resolution' key [w, h]; fall back to
+    # the current image size if the key is absent (no scaling needed).
+    if isinstance(data, dict):
+        orig_w, orig_h = data.get("annotation_resolution", [width, height])
+    elif isinstance(image_data, dict):
+        orig_w, orig_h = image_data.get("annotation_resolution", [width, height])
+    else:
+        orig_w, orig_h = width, height
+    scale_x = width / orig_w
+    scale_y = height / orig_h
 
     # Extract polygons (for segmentation)
     if task == 'seg':

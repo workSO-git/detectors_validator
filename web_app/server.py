@@ -24,6 +24,13 @@ import uuid
 import asyncio
 import collections
 
+# Load .env from project root (one level up from web_app/)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass  # python-dotenv not installed — fall back to system env vars
+
 
 def _safe_float(v):
     """Convert to float, returning None for NaN/Inf (which break JSON serialization)."""
@@ -89,13 +96,13 @@ app = FastAPI(title="Horizon Segmentation Viewer")
 
 def _build_available_models():
     """Build AVAILABLE_MODELS list using env vars (from .env) so paths are configurable per machine."""
-    yolo_det     = os.environ.get("YOLO_DET_MODEL",      r"C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt")
-    yolo_seg     = os.environ.get("YOLO_SEG_MODEL",      r"C:\Users\Sasha\projects\CV\models_extracted\models\best.pt")
-    dinov2       = os.environ.get("DINOV2_MLP_MODEL",    r"C:\Users\Sasha\projects\CV\best_dinov2_mlp_model.pth")
-    dinov2_3class= os.environ.get("DINOV2_3CLASS_MODEL", r"C:\Users\Sasha\projects\CV\best_dinov2_3class_model.pth")
-    smp_base     = os.environ.get("SMP_MODEL",           r"C:\Users\Sasha\projects\CV\best_sky_model.pth")
-    smp_ts       = os.environ.get("SMP_MODEL_TS",        r"C:\Users\Sasha\projects\CV\best_sky_model_ts.pt")
-    smp_onnx     = os.environ.get("SMP_MODEL_ONNX",      r"C:\Users\Sasha\projects\CV\best_sky_model.onnx")
+    yolo_det     = os.getenv("YOLO_DET_MODEL",      r"C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt")
+    yolo_seg     = os.getenv("YOLO_SEG_MODEL",      r"C:\Users\Sasha\projects\CV\models_extracted\models\best.pt")
+    dinov2       = os.getenv("DINOV2_MLP_MODEL",    r"C:\Users\Sasha\projects\CV\best_dinov2_mlp_model.pth")
+    dinov2_3class= os.getenv("DINOV2_3CLASS_MODEL", r"C:\Users\Sasha\projects\CV\best_dinov2_3class_model.pth")
+    smp_base     = os.getenv("SMP_SKY_MODEL",       os.getenv("SMP_MODEL", r"C:\Users\Sasha\projects\CV\best_sky_model.pth"))
+    smp_ts       = os.getenv("SMP_SKY_TS_MODEL",    os.getenv("SMP_MODEL_TS", r"C:\Users\Sasha\projects\CV\best_sky_model_ts.pt"))
+    smp_onnx     = os.getenv("SMP_SKY_ONNX_MODEL",  os.getenv("SMP_MODEL_ONNX", r"C:\Users\Sasha\projects\CV\best_sky_model.onnx"))
 
     return [
         {
@@ -103,14 +110,14 @@ def _build_available_models():
             "name": "📷 Camera ROI Detector (v7 Ultra)",
             "model_type": "camera",
             "model_path": "v7",
-            "task": "det"
+            "task": "det",
         },
         {
             "id": "camera_v6",
             "name": "📷 Camera ROI Detector (v6 Ultra)",
             "model_type": "camera",
             "model_path": "v6",
-            "task": "det"
+            "task": "det",
         },
         {
             "id": "vidi_yolo",
@@ -119,117 +126,116 @@ def _build_available_models():
             "model_path": {
                 "detector_module": "detectors.yolo_interface_detector",
                 "detector_class": "YOLOInterfaceDetector",
-                "model_path": yolo_det
+                "model_path": yolo_det,
             },
-            "task": "det"
+            "task": "det",
         },
         {
             "id": "vidi_geometric",
             "name": "Geometric Detector (VIDI)",
             "model_type": "interface",
             "model_path": "detectors.geometric_detector:GeometricDetector",
-            "task": "det"
+            "task": "det",
         },
         {
             "id": "gmm_detector",
             "name": "GMM Detector (VIDI)",
             "model_type": "interface",
             "model_path": {"detector_module": "detectors.gmm_detector", "detector_class": "GMMDetector"},
-            "task": "ignore"
+            "task": "ignore",
         },
         {
             "id": "ema_detector",
-            "name": "EMA Detector (test_gmm)",
+            "name": "EMA Detector (VIDI)",
             "model_type": "interface",
             "model_path": {"detector_module": "detectors.ema_detector", "detector_class": "EMADetector"},
-            "task": "ignore"
+            "task": "ignore",
         },
         {
             "id": "vidi_mask",
             "name": "Mask Detector (VIDI)",
             "model_type": "interface",
             "model_path": "detectors.mask_detector:MaskDetector",
-            "task": "det"
+            "task": "det",
         },
         {
             "id": "ignore_mask",
             "name": "Ignore Adapter (Masks)",
             "model_type": "ignore",
             "model_path": "None",
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "yolo_det",
             "name": "YOLO Object Detection (Default)",
             "model_type": "yolo",
             "model_path": yolo_det,
-            "task": "det"
+            "task": "det",
         },
         {
             "id": "yolo_seg",
             "name": "YOLO Segmentation",
             "model_type": "yolo",
             "model_path": yolo_seg,
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "smp_reznet",
             "name": "SMP ResNet (Best Sky - Base)",
             "model_type": "reznet",
             "model_path": smp_base,
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "smp_reznet_ts",
             "name": "SMP ResNet (TorchScript - 100+ FPS)",
             "model_type": "reznet",
             "model_path": smp_ts,
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "smp_reznet_onnx",
             "name": "SMP ResNet (ONNX Runtime)",
             "model_type": "reznet",
             "model_path": smp_onnx,
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "cv_horizon",
             "name": "OpenCV Horizon Detection (Algorithm)",
             "model_type": "horizon",
             "model_path": "algorithm",
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "cv_horizon_tracker",
             "name": "Horizon Tracking (Optical Flow)",
             "model_type": "tracker",
             "model_path": "algorithm",
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "depth_anything",
             "name": "Depth-Anything V2 (Near)",
             "model_type": "depth",
             "model_path": "none",
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "dinov2_mlp",
             "name": "DINOv2 MLP (Best Sky - 94% IoU)",
             "model_type": "dinov2",
             "model_path": dinov2,
-            "task": "seg"
+            "task": "seg",
         },
         {
             "id": "dinov2_mlp_3class",
             "name": "DINOv2 MLP (3-Class: Sky/Ground/UI)",
             "model_type": "dinov2",
             "model_path": dinov2_3class,
-            "task": "seg"
+            "task": "seg",
         },
     ]
-
 AVAILABLE_MODELS = _build_available_models()
 
 # Initialize model globally
@@ -464,15 +470,11 @@ async def process_image(
             stem        = Path(file.filename).stem
             labels_path = Path(labels_dir.strip())
 
-            print(f"[GT DEBUG] filename={file.filename}, stem={stem}")
-            print(f"[GT DEBUG] labels_path={labels_path}, suffix={labels_path.suffix}, is_dir={labels_path.is_dir()}, exists={labels_path.exists()}")
-
             gt_masks, gt_boxes = [], []
             lbl_file = None
             has_gt_annotation = False
 
             if labels_path.suffix.lower() == '.json':
-                print(f"[GT DEBUG] → JSON branch")
                 gt_masks, gt_boxes, has_gt_annotation = _load_gt_from_json(labels_path, file.filename, w, h, model.task)
             elif labels_path.is_dir():
                 is_masks_dir = (
@@ -481,23 +483,18 @@ async def process_image(
                 )
                 # Only scan first level for txt to avoid slow rglob on large dirs
                 has_txt_labels = any(labels_path.glob('*.txt'))
-                print(f"[GT DEBUG] → DIR branch: is_masks_dir={is_masks_dir}, has_txt_labels={has_txt_labels}")
 
                 if is_masks_dir and not has_txt_labels:
-                    print(f"[GT DEBUG] → PNG mask branch, looking for {stem}.*")
                     gt_masks, has_gt_annotation = _load_gt_from_mask_png(labels_path, stem, w, h)
-                    print(f"[GT DEBUG] PNG mask result: found={has_gt_annotation}, masks={len(gt_masks)}")
                 else:
                     # Standard YOLO .txt labels directory
                     lbl_file = resolve_label_file(labels_path, stem)
-                    print(f"[GT DEBUG] → TXT branch: lbl_file={lbl_file}, exists={lbl_file.exists() if lbl_file else False}")
                     if lbl_file and lbl_file.exists():
                         gt_masks, gt_boxes = _load_gt_from_file(lbl_file, model.task, w, h)
                         has_gt_annotation = True
             else:
                 # It's a file (yaml, etc)
                 lbl_file = resolve_label_file(labels_path, stem)
-                print(f"[GT DEBUG] → FILE branch: lbl_file={lbl_file}")
                 if lbl_file and lbl_file.exists():
                     gt_masks, gt_boxes = _load_gt_from_file(lbl_file, model.task, w, h)
                     has_gt_annotation = True
@@ -739,15 +736,11 @@ async def websocket_video(websocket: WebSocket, path: str):
                     
                     if labels_path.suffix.lower() == '.json':
                         gt_masks, gt_boxes, has_gt_annotation = _load_gt_from_json(labels_path, stem, w, h, model.task)
-                        print(f"DEBUG JSON: stem={stem}, task={model.task}, found={has_gt_annotation}, boxes={len(gt_boxes)}")
                     else:
                         lbl_file = resolve_label_file(labels_path, stem)
                         if lbl_file and lbl_file.exists():
                             gt_masks, gt_boxes = _load_gt_from_file(lbl_file, model.task, w, h)
                             has_gt_annotation = True
-                            print(f"DEBUG TXT: found={has_gt_annotation}")
-                        else:
-                            print(f"DEBUG TXT: NOT FOUND {lbl_file}")
                                 
                     gt_list = gt_masks if model.task == 'seg' else gt_boxes
                     

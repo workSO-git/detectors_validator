@@ -56,6 +56,26 @@ def detect_camera_rois_v5(img: np.ndarray) -> List[CameraRegion]:
                 main.h = main.h + (main.y - outer_y)
                 main.y = outer_y
 
+    rois = _apply_smart_telemetry_guard(rois, gray, h, w)
+    return rois
+
+
+def _apply_smart_telemetry_guard(rois: List[CameraRegion], gray: np.ndarray, h: int, w: int) -> List[CameraRegion]:
+    for r in rois:
+        if r.y >= 150 and r.y + r.h > 580:
+            sub_w = max(10, r.w)
+            sub_x1 = max(0, r.x)
+            sub_x2 = min(w, r.x + sub_w)
+            if sub_x2 > sub_x1 and h >= 600:
+                spacer_means = gray[535:560, sub_x1:sub_x2].mean(axis=1)
+                widget_stds = gray[560:min(h, 600), sub_x1:sub_x2].std(axis=1)
+                if (spacer_means < 25.0).any() and (widget_stds > 30.0).any():
+                    min_rel_y = int(np.argmin(spacer_means))
+                    target_bot = 535 + min_rel_y
+                    new_h = max(100, target_bot - r.y)
+                    r.h = new_h
+                    r.area = r.w * r.h
+                    r.center_y = r.y + r.h / 2.0
     return rois
 
 if __name__ == "__main__":

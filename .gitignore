@@ -14,5 +14,22 @@ env/
 # Temp files
 web_app/temp/
 
-# Local paths config (use .env.example as template)
+# Local paths config / secrets (use .env.example as template)
 .env
+
+# Model weights (large binary files)
+*.pt
+*.pth
+*.onnx
+*.weights
+*.bin
+
+# Test images in project root
+*.jpg
+*.jpeg
+*.png
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+

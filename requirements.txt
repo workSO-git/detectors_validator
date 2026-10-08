@@ -1,7 +1,30 @@
-ultralytics
-opencv-python
+# Core
 numpy
+opencv-python
 pyyaml
+
+# Web server
 fastapi
-uvicorn
+uvicorn[standard]
 python-multipart
+
+# Environment variables
+python-dotenv
+
+# YOLO models
+ultralytics
+
+# Deep learning (PyTorch — install manually with CUDA support if needed)
+# See: https://pytorch.org/get-started/locally/
+# torch>=2.0.0
+# torchvision>=0.15.0
+
+# SMP adapter (ResNet / UNet)
+segmentation-models-pytorch
+
+# ONNX Runtime (for SMP ONNX model, optional)
+onnxruntime
+
+# Depth-Anything V2 (HuggingFace Transformers)
+transformers
+Pillow
