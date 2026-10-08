@@ -2,6 +2,17 @@ import argparse
 from pathlib import Path
 from evaluator import GenericEvaluator
 
+# --- Завантаження .env (локальні шляхи) ---
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    import os
+    for _line in _env_file.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _key, _val = _line.split("=", 1)
+            os.environ.setdefault(_key.strip(), _val.strip())
+
+
 def get_model_adapter(model_type, model_path, task, _depth_threshold=0.5, _depth_invert=False):
     """Factory function to instantiate the correct model adapter."""
     adapter = None
@@ -53,6 +64,9 @@ def get_model_adapter(model_type, model_path, task, _depth_threshold=0.5, _depth
     elif model_type == 'dinov2':
         from models.dinov2_model import DINOv2MlpModel
         adapter = DINOv2MlpModel(model_path=model_path, task=task)
+    elif model_type in ['camera', 'camera_roi']:
+        from models.camera_adapter import CameraAdapter
+        adapter = CameraAdapter(version=model_path, task=task)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
         

@@ -1,4 +1,14 @@
 import os
+from pathlib import Path as _Path
+
+# --- Завантаження .env (локальні шляхи) ---
+_env_file = _Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _key, _val = _line.split("=", 1)
+            os.environ.setdefault(_key.strip(), _val.strip())
 import sys
 import time
 import math
@@ -77,124 +87,150 @@ from main import get_model_adapter
 
 app = FastAPI(title="Horizon Segmentation Viewer")
 
-AVAILABLE_MODELS = [
-    {
-        "id": "vidi_yolo",
-        "name": "YOLO Interface Detector (VIDI)",
-        "model_type": "interface",
-        "model_path": {
-            "detector_module": "detectors.yolo_interface_detector",
-            "detector_class": "YOLOInterfaceDetector",
-            "model_path": r"C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt"
+def _build_available_models():
+    """Build AVAILABLE_MODELS list using env vars (from .env) so paths are configurable per machine."""
+    yolo_det     = os.environ.get("YOLO_DET_MODEL",      r"C:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt")
+    yolo_seg     = os.environ.get("YOLO_SEG_MODEL",      r"C:\Users\Sasha\projects\CV\models_extracted\models\best.pt")
+    dinov2       = os.environ.get("DINOV2_MLP_MODEL",    r"C:\Users\Sasha\projects\CV\best_dinov2_mlp_model.pth")
+    dinov2_3class= os.environ.get("DINOV2_3CLASS_MODEL", r"C:\Users\Sasha\projects\CV\best_dinov2_3class_model.pth")
+    smp_base     = os.environ.get("SMP_MODEL",           r"C:\Users\Sasha\projects\CV\best_sky_model.pth")
+    smp_ts       = os.environ.get("SMP_MODEL_TS",        r"C:\Users\Sasha\projects\CV\best_sky_model_ts.pt")
+    smp_onnx     = os.environ.get("SMP_MODEL_ONNX",      r"C:\Users\Sasha\projects\CV\best_sky_model.onnx")
+
+    return [
+        {
+            "id": "camera_v7",
+            "name": "📷 Camera ROI Detector (v7 Ultra)",
+            "model_type": "camera",
+            "model_path": "v7",
+            "task": "det"
         },
-        "task": "det"
-    },
-    {
-        "id": "vidi_geometric",
-        "name": "Geometric Detector (VIDI)",
-        "model_type": "interface",
-        "model_path": "detectors.geometric_detector:GeometricDetector",
-        "task": "det"
-    },
-    {
-        "id": "gmm_detector",
-        "name": "GMM Detector (VIDI)",
-        "model_type": "interface",
-        "model_path": {"detector_module": "detectors.gmm_detector", "detector_class": "GMMDetector"},
-        "task": "ignore"
-    },
-    {
-        "id": "ema_detector",
-        "name": "EMA Detector (test_gmm)",
-        "model_type": "interface",
-        "model_path": {"detector_module": "detectors.ema_detector", "detector_class": "EMADetector"},
-        "task": "ignore"
-    },
-    {
-        "id": "vidi_mask",
-        "name": "Mask Detector (VIDI)",
-        "model_type": "interface",
-        "model_path": "detectors.mask_detector:MaskDetector",
-        "task": "det"
-    },
-    {
-        "id": "ignore_mask",
-        "name": "Ignore Adapter (Masks)",
-        "model_type": "ignore",
-        "model_path": "None",
-        "task": "seg"
-    },
-    {
-        "id": "yolo_det",
-        "name": "YOLO Object Detection (Default)",
-        "model_type": "yolo",
-        "model_path": r"c:\Users\Sasha\projects\CV\det_pipeline\runs\drone_det_n\weights\best.pt",
-        "task": "det"
-    },
-    {
-        "id": "yolo_seg",
-        "name": "YOLO Segmentation",
-        "model_type": "yolo",
-        "model_path": r"C:\Users\Sasha\projects\CV\models_extracted\models\best.pt",
-        "task": "seg"
-    },
-    {
-        "id": "smp_reznet",
-        "name": "SMP ResNet (Best Sky - Base)",
-        "model_type": "reznet",
-        "model_path": r"C:\Users\Sasha\projects\CV\best_sky_model.pth",
-        "task": "seg"
-    },
-    {
-        "id": "smp_reznet_ts",
-        "name": "SMP ResNet (TorchScript - 100+ FPS)",
-        "model_type": "reznet",
-        "model_path": r"C:\Users\Sasha\projects\CV\best_sky_model_ts.pt",
-        "task": "seg"
-    },
-    {
-        "id": "smp_reznet_onnx",
-        "name": "SMP ResNet (ONNX Runtime)",
-        "model_type": "reznet",
-        "model_path": r"C:\Users\Sasha\projects\CV\best_sky_model.onnx",
-        "task": "seg"
-    },
-    {
-        "id": "cv_horizon",
-        "name": "OpenCV Horizon Detection (Algorithm)",
-        "model_type": "horizon",
-        "model_path": "algorithm",
-        "task": "seg"
-    },
-    {
-        "id": "cv_horizon_tracker",
-        "name": "Horizon Tracking (Optical Flow)",
-        "model_type": "tracker",
-        "model_path": "algorithm",
-        "task": "seg"
-    },
-    {
-        "id": "depth_anything",
-        "name": "Depth-Anything V2 (Near)",
-        "model_type": "depth",
-        "model_path": "none",
-        "task": "seg"
-    },
-    {
-        "id": "dinov2_mlp",
-        "name": "DINOv2 MLP (Best Sky - 94% IoU)",
-        "model_type": "dinov2",
-        "model_path": r"C:\Users\Sasha\projects\CV\best_dinov2_mlp_model.pth",
-        "task": "seg"
-    },
-    {
-        "id": "dinov2_mlp_3class",
-        "name": "DINOv2 MLP (3-Class)",
-        "model_type": "dinov2",
-        "model_path": r"C:\Users\Sasha\projects\CV\best_dinov2_3class_model.pth",
-        "task": "seg"
-    }
-]
+        {
+            "id": "camera_v6",
+            "name": "📷 Camera ROI Detector (v6 Ultra)",
+            "model_type": "camera",
+            "model_path": "v6",
+            "task": "det"
+        },
+        {
+            "id": "vidi_yolo",
+            "name": "YOLO Interface Detector (VIDI)",
+            "model_type": "interface",
+            "model_path": {
+                "detector_module": "detectors.yolo_interface_detector",
+                "detector_class": "YOLOInterfaceDetector",
+                "model_path": yolo_det
+            },
+            "task": "det"
+        },
+        {
+            "id": "vidi_geometric",
+            "name": "Geometric Detector (VIDI)",
+            "model_type": "interface",
+            "model_path": "detectors.geometric_detector:GeometricDetector",
+            "task": "det"
+        },
+        {
+            "id": "gmm_detector",
+            "name": "GMM Detector (VIDI)",
+            "model_type": "interface",
+            "model_path": {"detector_module": "detectors.gmm_detector", "detector_class": "GMMDetector"},
+            "task": "ignore"
+        },
+        {
+            "id": "ema_detector",
+            "name": "EMA Detector (test_gmm)",
+            "model_type": "interface",
+            "model_path": {"detector_module": "detectors.ema_detector", "detector_class": "EMADetector"},
+            "task": "ignore"
+        },
+        {
+            "id": "vidi_mask",
+            "name": "Mask Detector (VIDI)",
+            "model_type": "interface",
+            "model_path": "detectors.mask_detector:MaskDetector",
+            "task": "det"
+        },
+        {
+            "id": "ignore_mask",
+            "name": "Ignore Adapter (Masks)",
+            "model_type": "ignore",
+            "model_path": "None",
+            "task": "seg"
+        },
+        {
+            "id": "yolo_det",
+            "name": "YOLO Object Detection (Default)",
+            "model_type": "yolo",
+            "model_path": yolo_det,
+            "task": "det"
+        },
+        {
+            "id": "yolo_seg",
+            "name": "YOLO Segmentation",
+            "model_type": "yolo",
+            "model_path": yolo_seg,
+            "task": "seg"
+        },
+        {
+            "id": "smp_reznet",
+            "name": "SMP ResNet (Best Sky - Base)",
+            "model_type": "reznet",
+            "model_path": smp_base,
+            "task": "seg"
+        },
+        {
+            "id": "smp_reznet_ts",
+            "name": "SMP ResNet (TorchScript - 100+ FPS)",
+            "model_type": "reznet",
+            "model_path": smp_ts,
+            "task": "seg"
+        },
+        {
+            "id": "smp_reznet_onnx",
+            "name": "SMP ResNet (ONNX Runtime)",
+            "model_type": "reznet",
+            "model_path": smp_onnx,
+            "task": "seg"
+        },
+        {
+            "id": "cv_horizon",
+            "name": "OpenCV Horizon Detection (Algorithm)",
+            "model_type": "horizon",
+            "model_path": "algorithm",
+            "task": "seg"
+        },
+        {
+            "id": "cv_horizon_tracker",
+            "name": "Horizon Tracking (Optical Flow)",
+            "model_type": "tracker",
+            "model_path": "algorithm",
+            "task": "seg"
+        },
+        {
+            "id": "depth_anything",
+            "name": "Depth-Anything V2 (Near)",
+            "model_type": "depth",
+            "model_path": "none",
+            "task": "seg"
+        },
+        {
+            "id": "dinov2_mlp",
+            "name": "DINOv2 MLP (Best Sky - 94% IoU)",
+            "model_type": "dinov2",
+            "model_path": dinov2,
+            "task": "seg"
+        },
+        {
+            "id": "dinov2_mlp_3class",
+            "name": "DINOv2 MLP (3-Class: Sky/Ground/UI)",
+            "model_type": "dinov2",
+            "model_path": dinov2_3class,
+            "task": "seg"
+        },
+    ]
+
+AVAILABLE_MODELS = _build_available_models()
 
 # Initialize model globally
 model = None
@@ -214,15 +250,16 @@ async def startup_event():
         except Exception as e:
             print(f"Failed to delete {item}: {e}")
             
-    # Load default model
-    default_cfg = AVAILABLE_MODELS[0]
-    current_model_id = default_cfg["id"]
-    print(f"Loading default model {default_cfg['name']}...")
-    try:
-        model = get_model_adapter(default_cfg['model_type'], default_cfg['model_path'], default_cfg['task'])
-        print("Model loaded successfully.")
-    except Exception as e:
-        print(f"Error loading default model: {e}")
+    # Load model with automatic fallback if a model path is missing
+    for cfg in AVAILABLE_MODELS:
+        try:
+            print(f"Loading model {cfg['name']}...")
+            model = get_model_adapter(cfg['model_type'], cfg['model_path'], cfg['task'])
+            current_model_id = cfg["id"]
+            print(f"Model '{cfg['name']}' loaded successfully.")
+            break
+        except Exception as e:
+            print(f"Warning: Could not load model '{cfg['name']}': {e}")
 
 def perform_inference_and_draw(model_adapter, img):
     """
@@ -283,13 +320,17 @@ def perform_inference_and_draw(model_adapter, img):
                 cv2.addWeighted(colored_mask, 0.5, img_masks, 1.0, 0, img_masks)
                 
         # Draw boxes
-        for box in boxes:
-            x1, y1, x2, y2 = [int(v) for v in box]
-            cv2.rectangle(img_all, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.rectangle(img_boxes, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            # Label
-            cv2.putText(img_all, "det", (x1, max(y1 - 5, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            cv2.putText(img_boxes, "det", (x1, max(y1 - 5, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        if 'annotated_img' in preds and preds['annotated_img'] is not None:
+            img_all = preds['annotated_img'].copy()
+            img_boxes = preds['annotated_img'].copy()
+        else:
+            for box in boxes:
+                x1, y1, x2, y2 = [int(v) for v in box]
+                cv2.rectangle(img_all, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.rectangle(img_boxes, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                # Label
+                cv2.putText(img_all, "det", (x1, max(y1 - 5, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                cv2.putText(img_boxes, "det", (x1, max(y1 - 5, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             
         # Create a mock result object that mimics YOLO's res.masks and res.boxes for websocket metrics compatibility
         class MockRes:
@@ -384,6 +425,9 @@ async def process_image(
             return JSONResponse(status_code=400, content={"error": "Invalid image file"})
 
         h, w = img.shape[:2]
+
+        if hasattr(model, 'set_video_mode'):
+            model.set_video_mode(False)
 
         # Run inference
         img_all, img_masks, img_boxes, inf_time, num_objects, res = perform_inference_and_draw(model, img)
@@ -589,6 +633,8 @@ async def websocket_video(websocket: WebSocket, path: str):
                         buffer_ious.clear()
                         buffer_centroids.clear()
                         buffer_detections.clear()
+                        if hasattr(model, 'reset'):
+                            model.reset()
                         # Reset GMM Detector on seek so it doesn't get corrupted by disjointed frames
                         if hasattr(model, '_detector') and hasattr(model._detector, 'frames_processed'):
                             model._detector.frames_processed = 0
@@ -618,6 +664,12 @@ async def websocket_video(websocket: WebSocket, path: str):
     if hasattr(model, 'train') and getattr(model, '__class__', None).__name__ == 'IgnoreAdapter':
         print(f"[Server] Dynamic training for IgnoreAdapter on video: {path}")
         model.train([path], total_sample_count=150)
+
+    # Ensure model knows it's streaming a video and reset sequential state
+    if hasattr(model, 'set_video_mode'):
+        model.set_video_mode(True)
+    if hasattr(model, 'reset'):
+        model.reset()
 
     # Ensure GMM Detector (and others) knows it's streaming a video
     if hasattr(model, '_detector'):

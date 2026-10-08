@@ -13,3 +13,6 @@ env/
 
 # Temp files
 web_app/temp/
+
+# Local paths config (use .env.example as template)
+.env
