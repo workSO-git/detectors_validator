@@ -113,6 +113,43 @@ def span_mean(cum: np.ndarray, start: int, end: int) -> float:
     return float((cum[end] - cum[start]) / (end - start))
 
 
+def safe_max(arr: np.ndarray) -> float:
+    return float(arr.max()) if len(arr) > 0 else 0.0
+
+
+def top_edge_scan(gray: np.ndarray, x1: int, x2: int, min_step: int = 2, zone: float = 0.35) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Scans top 35% rows for horizontal gradient sign coherence inside [x1, x2].
+    Returns (candidate_rows, ownership_scores).
+    """
+    g = gray.astype(np.int16)
+    H = int(gray.shape[0] * zone)
+    if H < 5 or (x2 - x1) < 20:
+        return np.array([], dtype=int), np.zeros(H)
+
+    d = g[1:H+1, :] - g[:H, :]
+
+    def coh(a: int, b: int):
+        if b - a < 20:
+            return np.zeros(H), np.zeros(H)
+        s = d[:, a:b]
+        return (s >= min_step).mean(axis=1), (s <= -min_step).mean(axis=1)
+
+    up_in, dn_in = coh(x1, x2)
+    up_l, dn_l = coh(0, max(0, x1 - 5))
+    up_r, dn_r = coh(min(gray.shape[1], x2 + 5), gray.shape[1])
+
+    own_up = up_in - np.maximum(up_l, up_r)
+    own_dn = dn_in - np.maximum(dn_l, dn_r)
+    own = np.maximum(own_up, own_dn)
+
+    max_coh = np.maximum(up_in, dn_in)
+
+    cand_indices = np.where((max_coh > 0.60) & ((own > 0.25) | (max_coh > 0.75)))[0]
+    return cand_indices + 1, own
+
+
+
 def refine_cell_y_v7(img: np.ndarray, cell_x: int, cell_w: int, default_top: int = 0, default_bot: int = 0, pre_gray: np.ndarray = None, pre_sobel_y: np.ndarray = None, pre_mono_m: np.ndarray = None) -> Tuple[int, int]:
     h, w = img.shape[:2]
     sub_gray = pre_gray[:, cell_x:cell_x + cell_w] if pre_gray is not None else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[:, cell_x:cell_x + cell_w]
@@ -279,7 +316,7 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
     center_v_soft_15 = float((lines_v_soft_15 > 0).mean(axis=0)[637:643].max()) if lines_v_soft_15.size > 0 and w >= 643 else 0.0
     is_true_divider = (center_v_soft_25 > 0.30) or (center_v_soft_15 > 0.32)
 
-    top_white_bar = (row_means[:25].mean() > 195 and mono_row[:25].mean() > 0.60)
+    top_white_bar = (row_means[:15].mean() > 180 and mono_row[:15].mean() > 0.40)
     top_offset = 25 if top_white_bar else 0
 
     if w <= 700 and h <= 500:
@@ -287,16 +324,16 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
             rois = [CameraRegion(x=0, y=top_offset, w=w, h=h-top_offset, area=w*(h-top_offset), activity=float(gray.std()), center_x=w/2.0, center_y=(h+top_offset)/2.0, rank=1)]
             return _scale_rois_if_needed(rois, scale)
 
-    if w >= 1200 and h >= 700 and not has_side_pillars:
+    if not has_side_pillars:
         if (mono_row[:15].mean() < 0.25 or top_white_bar) and mono_row[-15:].mean() < 0.25 and mono_col[:15].mean() < 0.25 and mono_col[-15:].mean() < 0.25:
-            if float(h_line_dens_25[:25].max() if len(h_line_dens_25[:25]) > 0 else 0) < 0.05 and float(h_line_dens_25[-25:].max() if len(h_line_dens_25[-25:]) > 0 else 0) < 0.05:
+            if safe_max(h_line_dens_25[:25]) < 0.05 and safe_max(h_line_dens_25[-25:]) < 0.05:
                 rois = [CameraRegion(x=0, y=top_offset, w=w, h=h-top_offset, area=w*(h-top_offset), activity=float(gray.std()), center_x=w/2.0, center_y=(h+top_offset)/2.0, rank=1)]
                 return _scale_rois_if_needed(rois, scale)
         if not is_true_divider and col_stds[:20].mean() > 20.0 and col_stds[-20:].mean() > 20.0 and row_stds[:20].mean() > 10.0 and row_stds[-20:].mean() > 10.0:
             rois = [CameraRegion(x=0, y=top_offset, w=w, h=h-top_offset, area=w*(h-top_offset), activity=float(gray.std()), center_x=w/2.0, center_y=(h+top_offset)/2.0, rank=1)]
             return _scale_rois_if_needed(rois, scale)
         if not is_true_divider and row_stds[:20].mean() > 12.0 and row_stds[-20:].mean() > 12.0 and col_stds[:20].mean() > 12.0 and col_stds[-20:].mean() > 12.0:
-            if float(h_line_dens_25[:20].max() if len(h_line_dens_25[:20]) > 0 else 0) < 0.03 and float(h_line_dens_25[-20:].max() if len(h_line_dens_25[-20:]) > 0 else 0) < 0.03:
+            if safe_max(h_line_dens_25[:20]) < 0.03 and safe_max(h_line_dens_25[-20:]) < 0.03:
                 rois = [CameraRegion(x=0, y=top_offset, w=w, h=h-top_offset, area=w*(h-top_offset), activity=float(gray.std()), center_x=w/2.0, center_y=(h+top_offset)/2.0, rank=1)]
                 return _scale_rois_if_needed(rois, scale)
 
@@ -347,6 +384,45 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
     top_y, best_top_score, best_top_line = numba_scan_top_boundary(
         h, row_stds, row_means, mono_row, h_line_dens, h_line_dens_25, row_means, cum_row_stds, cum_mono_row
     )
+
+    # Refine top_y with Gradient Sign Coherence candidate if available
+    coh_cands, coh_own = top_edge_scan(gray, left_x, right_x, min_step=2, zone=0.35)
+    coh_top_y = int(coh_cands[0]) if len(coh_cands) > 0 else 0
+    if coh_top_y > 0 and 20 <= coh_top_y <= 140:
+        if best_top_score <= 0 or top_y > coh_top_y + 30:
+            top_y = coh_top_y
+
+    # Dynamic dark toolbar gap scanner (universal across image scales and UI layouts)
+    max_top_search = int(h * 0.25)
+    cum_row_means = make_cum(row_means)
+    is_windowed = (left_x > 30 or right_x < w - 30 or top_white_bar or (h_line_dens[:45] > 0.25).any())
+    has_toolbar_gap = False
+    if is_windowed and 0 < top_y < max_top_search:
+        gap_start = -1
+        gap_len = 0
+        for r in range(max(1, top_y), max_top_search):
+            if row_stds[r] < 10.0 and row_means[r] < 45.0:
+                if gap_start < 0:
+                    gap_start = r
+                gap_len += 1
+            else:
+                if gap_len >= 4:
+                    after_mean = span_mean(cum_row_means, r, min(h, r + 5))
+                    after_std = span_mean(cum_row_stds, r, min(h, r + 5))
+                    if (after_mean > row_means[max(0, r-1)] + 15.0) or (after_std > 25.0) or (h_line_dens[r] > 0.10):
+                        if top_y < r:
+                            top_y = r
+                            has_toolbar_gap = True
+                        break
+                gap_start = -1
+                gap_len = 0
+
+    # Verify that there is an actual UI/black bar above top_y before accepting top_y > 20
+    if top_y > 20 and not has_toolbar_gap:
+        top_margin_std = span_mean(cum_row_stds, 0, min(top_y, 20))
+        top_margin_mean = span_mean(cum_row_means, 0, min(top_y, 20))
+        if top_margin_std > 8.0 and top_margin_mean > 40.0 and not top_white_bar:
+            top_y = 0
 
     # 4. BOTTOM BOUNDARY
     bot_y = h
