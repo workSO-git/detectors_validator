@@ -22,7 +22,39 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any
 
-from analyze_photos_v3 import CameraRegion, compute_iou, annotate_frame
+try:
+    from analyze_photos_v3 import CameraRegion, compute_iou, annotate_frame
+except ImportError:
+    @dataclass
+    class CameraRegion:
+        x: int
+        y: int
+        w: int
+        h: int
+        area: int
+        activity: float
+        center_x: float
+        center_y: float
+        rank: int = 1
+
+    def compute_iou(boxA: dict, boxB: dict) -> float:
+        xA = max(boxA['x'], boxB['x'])
+        yA = max(boxA['y'], boxB['y'])
+        xB = min(boxA['x'] + boxA['w'], boxB['x'] + boxB['w'])
+        yB = min(boxA['y'] + boxA['h'], boxB['y'] + boxB['h'])
+        interArea = max(0, xB - xA) * max(0, yB - yA)
+        boxAArea = boxA['w'] * boxA['h']
+        boxBArea = boxB['w'] * boxB['h']
+        denom = float(boxAArea + boxBArea - interArea)
+        return interArea / denom if denom > 0 else 0.0
+
+    def annotate_frame(img: np.ndarray, rois: List[CameraRegion]) -> np.ndarray:
+        ann = img.copy()
+        for r in rois:
+            color = (0, 255, 0) if r.rank == 1 else (0, 165, 255)
+            cv2.rectangle(ann, (r.x, r.y), (r.x + r.w, r.y + r.h), color, 3)
+            cv2.putText(ann, f"Rank {r.rank}: {r.w}x{r.h}", (r.x + 10, r.y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        return ann
 
 
 def safe_max(arr: np.ndarray, default: float = 0.0) -> float:
