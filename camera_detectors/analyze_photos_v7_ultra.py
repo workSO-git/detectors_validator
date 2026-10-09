@@ -361,9 +361,9 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
     lines_v_soft_25 = cv2.morphologyEx(thresh_x_25, cv2.MORPH_OPEN, kernel_v_25px)
     lines_v_soft_15 = cv2.morphologyEx(thresh_x_25, cv2.MORPH_OPEN, kernel_v_15px)
 
-    center_v_soft_25 = float((lines_v_soft_25 > 0).mean(axis=0)[637:643].max()) if lines_v_soft_25.size > 0 and w >= 643 else 0.0
-    center_v_soft_15 = float((lines_v_soft_15 > 0).mean(axis=0)[637:643].max()) if lines_v_soft_15.size > 0 and w >= 643 else 0.0
-    is_true_divider = (center_v_soft_25 > 0.30) or (center_v_soft_15 > 0.32)
+    center_v_soft_25 = float((lines_v_soft_25 > 0).mean(axis=0)[635:645].max()) if lines_v_soft_25.size > 0 and w >= 645 else 0.0
+    center_v_soft_15 = float((lines_v_soft_15 > 0).mean(axis=0)[635:645].max()) if lines_v_soft_15.size > 0 and w >= 645 else 0.0
+    is_true_divider = (center_v_soft_25 > 0.25) or (center_v_soft_15 > 0.25)
 
     top_white_bar = (row_means[:15].mean() > 180 and mono_row[:15].mean() > 0.40)
     top_offset = 25 if top_white_bar else 0
@@ -503,9 +503,9 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
 
     # MULTI-CAM LAYOUT BRANCH
     if (right_x - left_x) > 800 and is_true_divider:
-        div_col = (lines_v_soft_15[:, 637:643] > 0).any(axis=1)
+        div_col = (lines_v_soft_15[:, 635:645] > 0).any(axis=1)
         div_indices = np.where(div_col)[0]
-        valid_div = [idx for idx in div_indices if idx >= 45]
+        valid_div = [idx for idx in div_indices if 120 <= idx <= 250]
         if valid_div:
             top_y = int(valid_div[0])
 
