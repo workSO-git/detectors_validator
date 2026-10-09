@@ -153,6 +153,39 @@ def refine_cell_y_v6(img: np.ndarray, cell_x: int, cell_w: int, default_top: int
     return top_y, bot_y - top_y
 
 
+def top_edge_scan(gray: np.ndarray, x1: int, x2: int, min_step: int = 2, zone: float = 0.35) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Scans top 35% rows for horizontal gradient sign coherence inside [x1, x2].
+    Returns (candidate_rows, ownership_scores).
+    """
+    g = gray.astype(np.int16)
+    H = int(gray.shape[0] * zone)
+    if H < 5 or (x2 - x1) < 20:
+        return np.array([], dtype=int), np.zeros(H)
+
+    d = g[1:H+1, :] - g[:H, :]  # Row difference r+1 - r
+
+    def coh(a: int, b: int):
+        if b - a < 20:
+            return np.zeros(H), np.zeros(H)
+        s = d[:, a:b]
+        return (s >= min_step).mean(axis=1), (s <= -min_step).mean(axis=1)
+
+    up_in, dn_in = coh(x1, x2)
+    up_l, dn_l = coh(0, max(0, x1 - 5))
+    up_r, dn_r = coh(min(gray.shape[1], x2 + 5), gray.shape[1])
+
+    # Edge ownership: coherent inside ROI, but NOT outside
+    own_up = up_in - np.maximum(up_l, up_r)
+    own_dn = dn_in - np.maximum(dn_l, dn_r)
+    own = np.maximum(own_up, own_dn)
+
+    max_coh = np.maximum(up_in, dn_in)
+
+    cand_indices = np.where((max_coh > 0.60) & ((own > 0.25) | (max_coh > 0.75)))[0]
+    return cand_indices + 1, own
+
+
 def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
     """
     Fast CPU Single-Frame Camera ROI Detection (Version 6 Ultra).
@@ -285,6 +318,10 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
                 best_right_score = score
                 right_x = c + 1
 
+    # 2.5 GRADIENT SIGN COHERENCE TOP SCAN
+    coh_cands, coh_own = top_edge_scan(gray, left_x, right_x, min_step=2, zone=0.35)
+    coh_top_y = int(coh_cands[0]) if len(coh_cands) > 0 else 0
+
     # 3. TOP BOUNDARY
     top_y = 0
     best_top_score = -1.0
@@ -329,6 +366,11 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
                 best_top_score = score
                 top_y = r
                 best_top_line = line
+
+    # Refine top_y with Gradient Sign Coherence candidate if available and corrects a deep false horizon
+    if coh_top_y > 0 and 20 <= coh_top_y <= 140:
+        if best_top_score <= 0 or top_y > coh_top_y + 30:
+            top_y = coh_top_y
 
     # 4. BOTTOM BOUNDARY
     bot_y = h
@@ -534,11 +576,28 @@ class VideoCameraDetector:
 if __name__ == "__main__":
     print("Testing analyze_photos_v6_ultra.py (Version 6 Ultra Fast CPU)...")
 
-    with open("ground_truth/_ground_truth.json", "r", encoding="utf-8") as f:
+    gt_json_path = Path("ground_truth/_ground_truth.json")
+    if not gt_json_path.exists():
+        gt_json_path = Path(r"D:\work\video_zone_detector\ground_truth\_ground_truth.json")
+
+    photo_dir = Path("photo")
+    if not photo_dir.exists():
+        photo_dir = Path(r"D:\work\video_zone_detector\photo")
+
+    bad_dir = Path("bad")
+    if not bad_dir.exists():
+        bad_dir = Path(r"D:\work\video_zone_detector\bad")
+
+    bad_out_dir = Path(r"D:\work\video_zone_detector\bad_results_v6")
+    bad_out_dir.mkdir(parents=True, exist_ok=True)
+
+    failed_iou_dir = Path(r"D:\work\video_zone_detector\failed_iou_results_v6")
+    failed_iou_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(gt_json_path, "r", encoding="utf-8") as f:
         gt_data = json.load(f)
     gt_dict = {item["file"]: item for item in gt_data}
 
-    photo_dir = Path("photo")
     images_gt = [p for p in sorted(photo_dir.iterdir()) if p.name in gt_dict]
 
     ious = []
@@ -565,10 +624,22 @@ if __name__ == "__main__":
             pass_98 += 1
         else:
             errors.append((p.name, iou, pred_box, gt_box))
+            # Annotate image and save to failed_iou_dir
+            annotated = annotate_frame(img.copy(), rois)
+            # Also draw Ground Truth box in cyan for comparison
+            gt_x, gt_y, gt_w, gt_h = gt_box["x"], gt_box["y"], gt_box["w"], gt_box["h"]
+            cv2.rectangle(annotated, (gt_x, gt_y), (gt_x + gt_w, gt_y + gt_h), (255, 255, 0), 2)
+            cv2.putText(annotated, f"GT IoU={iou:.3f}", (gt_x + 5, gt_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            
+            out_file = failed_iou_dir / p.name
+            ok, buf = cv2.imencode(p.suffix.lower() or '.jpg', annotated)
+            if ok:
+                with open(out_file, "wb") as f:
+                    f.write(buf.tobytes())
 
     total_time = time.perf_counter() - t0
-    avg_ms = (total_time * 1000.0) / len(images_gt)
-    fps = len(images_gt) / total_time
+    avg_ms = (total_time * 1000.0) / len(images_gt) if len(images_gt) > 0 else 0
+    fps = len(images_gt) / total_time if total_time > 0 else 0
 
     print("\n" + "=" * 75)
     print("VERSION 6 ULTRA FAST CPU BENCHMARK RESULTS (1280x720 Single Frame):")
@@ -579,3 +650,25 @@ if __name__ == "__main__":
     print(f"  Avg Time per Frame:          ⚡ {avg_ms:.2f} ms")
     print(f"  Throughput Speed (FPS):      🚀 {fps:.1f} FPS")
     print("=" * 75)
+
+    print(f"\n❌ Failed IoU (< 0.98) Count: {len(errors)} frames saved to {failed_iou_dir}")
+    for fname, err_iou, pbox, gbox in errors:
+        print(f"  - {fname}: IoU = {err_iou:.4f} | Pred: {pbox} | GT: {gbox}")
+
+    if bad_dir.exists():
+        print(f"\nProcessing bad directory images: {bad_dir} -> {bad_out_dir}")
+        bad_images = [p for p in sorted(bad_dir.iterdir()) if p.suffix.lower() in ('.jpg', '.jpeg', '.png')]
+        for bp in bad_images:
+            arr = np.fromfile(str(bp), dtype=np.uint8)
+            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if img is None:
+                continue
+            rois = detect_camera_rois_v6_ultra(img)
+            annotated = annotate_frame(img.copy(), rois)
+            out_file = bad_out_dir / bp.name
+            ok, buf = cv2.imencode(bp.suffix.lower() or '.jpg', annotated)
+            if ok:
+                with open(out_file, "wb") as f:
+                    f.write(buf.tobytes())
+        print(f"✅ Processed {len(bad_images)} images from BAD folder and saved to {bad_out_dir}")
+
