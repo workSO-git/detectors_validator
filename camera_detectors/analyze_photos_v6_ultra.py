@@ -258,14 +258,14 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
     center_v_soft_15 = float((lines_v_soft_15 > 0).mean(axis=0)[637:643].max()) if lines_v_soft_15.size > 0 and w >= 643 else 0.0
     is_true_divider = (center_v_soft_25 > 0.30) or (center_v_soft_15 > 0.32)
 
-    top_white_bar = (row_means[:25].mean() > 195 and mono_row[:25].mean() > 0.60)
+    top_white_bar = (row_means[:15].mean() > 180 and mono_row[:15].mean() > 0.40)
     top_offset = 25 if top_white_bar else 0
 
     if w <= 700 and h <= 500:
         if row_stds[:15].mean() > 10.0 and row_stds[-15:].mean() > 10.0:
             return [CameraRegion(x=0, y=top_offset, w=w, h=h-top_offset, area=w*(h-top_offset), activity=float(cv2.meanStdDev(gray)[1][0][0]), center_x=w/2.0, center_y=(h+top_offset)/2.0, rank=1)]
 
-    if w >= 1200 and h >= 700 and not has_side_pillars:
+    if not has_side_pillars:
         if (mono_row[:15].mean() < 0.25 or top_white_bar) and mono_row[-15:].mean() < 0.25 and mono_col[:15].mean() < 0.25 and mono_col[-15:].mean() < 0.25:
             if safe_max(h_line_dens_25[:25]) < 0.05 and safe_max(h_line_dens_25[-25:]) < 0.05:
                 return [CameraRegion(x=0, y=top_offset, w=w, h=h-top_offset, area=w*(h-top_offset), activity=float(cv2.meanStdDev(gray)[1][0][0]), center_x=w/2.0, center_y=(h+top_offset)/2.0, rank=1)]
@@ -318,9 +318,14 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
                 best_right_score = score
                 right_x = c + 1
 
-    # 2.5 GRADIENT SIGN COHERENCE TOP SCAN
+    # 2.5 GRADIENT SIGN COHERENCE TOP SCAN & LONG LINE COVERAGE
     coh_cands, coh_own = top_edge_scan(gray, left_x, right_x, min_step=2, zone=0.35)
     coh_top_y = int(coh_cands[0]) if len(coh_cands) > 0 else 0
+
+    sub_w = max(50, right_x - left_x)
+    kernel_h_long = cv2.getStructuringElement(cv2.MORPH_RECT, (max(20, int(sub_w * 0.08)), 1))
+    lines_h_long = cv2.morphologyEx(thresh_y_35[:, left_x:right_x], cv2.MORPH_OPEN, kernel_h_long)
+    h_line_cov = (lines_h_long > 0).mean(axis=1)
 
     # 3. TOP BOUNDARY
     top_y = 0
@@ -336,6 +341,10 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
 
         mono_drop = max(0.0, pre_mono - post_mono)
         is_outer_trans = (pre_std < 1.5 and post_std > 2.5 and r >= 35)
+
+        # Reject top candidates in top toolbar region r < 45 if there is no continuous horizontal frame line
+        if r < 45 and h_line_cov[r] < 0.25 and not is_outer_trans:
+            continue
 
         if line < 0.05 and mono_drop < 0.12 and not is_outer_trans:
             continue
@@ -371,6 +380,40 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
     if coh_top_y > 0 and 20 <= coh_top_y <= 140:
         if best_top_score <= 0 or top_y > coh_top_y + 30:
             top_y = coh_top_y
+
+    # Dynamic dark toolbar gap scanner (universal across image scales and UI layouts)
+    max_top_search = int(h * 0.25)
+    is_windowed = (left_x > 30 or right_x < w - 30 or (h_line_dens[:45] > 0.25).any())
+    has_toolbar_gap = False
+    if is_windowed and 0 < top_y < max_top_search:
+        gap_start = -1
+        gap_len = 0
+        for r in range(max(1, top_y), max_top_search):
+            if row_stds[r] < 10.0 and row_means[r] < 45.0:
+                if gap_start < 0:
+                    gap_start = r
+                gap_len += 1
+            else:
+                if gap_len >= 4:
+                    cum_row_means = make_cum(row_means)
+                    cum_row_stds = make_cum(row_stds)
+                    after_mean = span_mean(cum_row_means, r, min(h, r + 5))
+                    after_std = span_mean(cum_row_stds, r, min(h, r + 5))
+                    if (after_mean > row_means[max(0, r-1)] + 15.0) or (after_std > 25.0) or (h_line_dens[r] > 0.10):
+                        if top_y < r:
+                            top_y = r
+                            has_toolbar_gap = True
+                        break
+                gap_start = -1
+                gap_len = 0
+
+    # Verify that there is an actual UI/black bar above top_y before accepting top_y > 20
+    if top_y > 20 and not has_toolbar_gap:
+        cum_row_means = make_cum(row_means)
+        top_margin_std = span_mean(cum_row_stds, 0, min(top_y, 20))
+        top_margin_mean = span_mean(cum_row_means, 0, min(top_y, 20))
+        if top_margin_std > 8.0 and top_margin_mean > 40.0 and not top_white_bar:
+            top_y = 0
 
     # 4. BOTTOM BOUNDARY
     bot_y = h
@@ -571,104 +614,4 @@ class VideoCameraDetector:
         self.last_densities = [self._get_boundary_densities(gray, r) for r in rois]
         self.frame_count = 1
         return rois
-
-
-if __name__ == "__main__":
-    print("Testing analyze_photos_v6_ultra.py (Version 6 Ultra Fast CPU)...")
-
-    gt_json_path = Path("ground_truth/_ground_truth.json")
-    if not gt_json_path.exists():
-        gt_json_path = Path(r"D:\work\video_zone_detector\ground_truth\_ground_truth.json")
-
-    photo_dir = Path("photo")
-    if not photo_dir.exists():
-        photo_dir = Path(r"D:\work\video_zone_detector\photo")
-
-    bad_dir = Path("bad")
-    if not bad_dir.exists():
-        bad_dir = Path(r"D:\work\video_zone_detector\bad")
-
-    bad_out_dir = Path(r"D:\work\video_zone_detector\bad_results_v6")
-    bad_out_dir.mkdir(parents=True, exist_ok=True)
-
-    failed_iou_dir = Path(r"D:\work\video_zone_detector\failed_iou_results_v6")
-    failed_iou_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(gt_json_path, "r", encoding="utf-8") as f:
-        gt_data = json.load(f)
-    gt_dict = {item["file"]: item for item in gt_data}
-
-    images_gt = [p for p in sorted(photo_dir.iterdir()) if p.name in gt_dict]
-
-    ious = []
-    pass_98 = 0
-    errors = []
-
-    t0 = time.perf_counter()
-
-    for p in images_gt:
-        arr = np.fromfile(str(p), dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            continue
-
-        rois = detect_camera_rois_v6_ultra(img)
-        main = rois[0]
-
-        pred_box = {"x": main.x, "y": main.y, "w": main.w, "h": main.h}
-        gt_box = gt_dict[p.name]["main_roi"]
-        iou = compute_iou(pred_box, gt_box)
-        ious.append(iou)
-
-        if iou >= 0.98:
-            pass_98 += 1
-        else:
-            errors.append((p.name, iou, pred_box, gt_box))
-            # Annotate image and save to failed_iou_dir
-            annotated = annotate_frame(img.copy(), rois)
-            # Also draw Ground Truth box in cyan for comparison
-            gt_x, gt_y, gt_w, gt_h = gt_box["x"], gt_box["y"], gt_box["w"], gt_box["h"]
-            cv2.rectangle(annotated, (gt_x, gt_y), (gt_x + gt_w, gt_y + gt_h), (255, 255, 0), 2)
-            cv2.putText(annotated, f"GT IoU={iou:.3f}", (gt_x + 5, gt_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            
-            out_file = failed_iou_dir / p.name
-            ok, buf = cv2.imencode(p.suffix.lower() or '.jpg', annotated)
-            if ok:
-                with open(out_file, "wb") as f:
-                    f.write(buf.tobytes())
-
-    total_time = time.perf_counter() - t0
-    avg_ms = (total_time * 1000.0) / len(images_gt) if len(images_gt) > 0 else 0
-    fps = len(images_gt) / total_time if total_time > 0 else 0
-
-    print("\n" + "=" * 75)
-    print("VERSION 6 ULTRA FAST CPU BENCHMARK RESULTS (1280x720 Single Frame):")
-    print("-" * 75)
-    print(f"  Total Ground Truth evaluated: {len(ious)}")
-    print(f"  Pass Rate (IoU >= 0.98):     {pass_98} / {len(ious)} ({pass_98/len(ious)*100:.1f}%)")
-    print(f"  Mean IoU:                    {np.mean(ious)*100:.2f}%")
-    print(f"  Avg Time per Frame:          ⚡ {avg_ms:.2f} ms")
-    print(f"  Throughput Speed (FPS):      🚀 {fps:.1f} FPS")
-    print("=" * 75)
-
-    print(f"\n❌ Failed IoU (< 0.98) Count: {len(errors)} frames saved to {failed_iou_dir}")
-    for fname, err_iou, pbox, gbox in errors:
-        print(f"  - {fname}: IoU = {err_iou:.4f} | Pred: {pbox} | GT: {gbox}")
-
-    if bad_dir.exists():
-        print(f"\nProcessing bad directory images: {bad_dir} -> {bad_out_dir}")
-        bad_images = [p for p in sorted(bad_dir.iterdir()) if p.suffix.lower() in ('.jpg', '.jpeg', '.png')]
-        for bp in bad_images:
-            arr = np.fromfile(str(bp), dtype=np.uint8)
-            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if img is None:
-                continue
-            rois = detect_camera_rois_v6_ultra(img)
-            annotated = annotate_frame(img.copy(), rois)
-            out_file = bad_out_dir / bp.name
-            ok, buf = cv2.imencode(bp.suffix.lower() or '.jpg', annotated)
-            if ok:
-                with open(out_file, "wb") as f:
-                    f.write(buf.tobytes())
-        print(f"✅ Processed {len(bad_images)} images from BAD folder and saved to {bad_out_dir}")
-
+        
