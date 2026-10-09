@@ -448,7 +448,13 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
                     cum_row_stds = make_cum(row_stds)
                     after_mean = span_mean(cum_row_means, r, min(h, r + 5))
                     after_std = span_mean(cum_row_stds, r, min(h, r + 5))
+                    further_std = span_mean(cum_row_stds, min(h - 1, r + 12), min(h, r + 28))
                     if (after_mean > row_means[max(0, r-1)] + 15.0) or (after_std > 25.0) or (h_line_dens[r] > 0.10):
+                        if further_std < 14.0 and h_line_dens[r] < 0.30:
+                            gap_start = -1
+                            gap_len = 0
+                            continue
+
                         if top_y < r:
                             top_y = r
                             has_toolbar_gap = True

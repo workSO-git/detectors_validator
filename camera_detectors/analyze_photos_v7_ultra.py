@@ -444,7 +444,6 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
 
     # Dynamic dark toolbar gap scanner (universal across image scales and UI layouts)
     max_top_search = int(h * 0.25)
-    cum_row_means = make_cum(row_means)
     is_windowed = (left_x > 30 or right_x < w - 30 or top_white_bar or (h_line_dens[:45] > 0.25).any())
     has_toolbar_gap = False
     if is_windowed and 0 < top_y < max_top_search:
@@ -459,7 +458,13 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
                 if gap_len >= 4:
                     after_mean = span_mean(cum_row_means, r, min(h, r + 5))
                     after_std = span_mean(cum_row_stds, r, min(h, r + 5))
+                    further_std = span_mean(cum_row_stds, min(h - 1, r + 12), min(h, r + 28))
                     if (after_mean > row_means[max(0, r-1)] + 15.0) or (after_std > 25.0) or (h_line_dens[r] > 0.10):
+                        if further_std < 14.0 and h_line_dens[r] < 0.30:
+                            gap_start = -1
+                            gap_len = 0
+                            continue
+
                         if top_y < r:
                             top_y = r
                             has_toolbar_gap = True
