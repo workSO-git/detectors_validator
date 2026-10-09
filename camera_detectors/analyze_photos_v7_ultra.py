@@ -77,7 +77,8 @@ def n_span_mean(cum: np.ndarray, start: int, end: int) -> float:
 @njit(fastmath=True)
 def numba_scan_top_boundary(
     h: int, row_stds: np.ndarray, row_means: np.ndarray, mono_row: np.ndarray, h_line_dens: np.ndarray,
-    h_line_dens_25: np.ndarray, gray_mean_row: np.ndarray, cum_std: np.ndarray, cum_mono: np.ndarray
+    h_line_dens_25: np.ndarray, gray_mean_row: np.ndarray, cum_std: np.ndarray, cum_mono: np.ndarray,
+    cum_mean: np.ndarray
 ) -> Tuple[int, float, float]:
     top_y = 0
     best_top_score = -1.0
@@ -85,20 +86,30 @@ def numba_scan_top_boundary(
 
     max_search = int(h * 0.35)
     for r in range(1, max_search):
+        # Above-texture internal horizon rejection:
+        # If candidate r >= 60 has active stream texture & brightness above it (r-30..r-5), it's inside the video stream!
+        if r >= 60:
+            above_std = n_span_mean(cum_std, max(0, r - 30), max(0, r - 5))
+            above_mean = n_span_mean(cum_mean, max(0, r - 30), max(0, r - 5))
+            if above_std > 18.0 and above_mean > 18.0:
+                continue
+
         pre_std = n_span_mean(cum_std, 0, r) if r > 0 else row_stds[0]
         post_std = n_span_mean(cum_std, r, min(h, r + 20))
+        local_pre_std = n_span_mean(cum_std, max(0, r - 15), r) if r > 0 else row_stds[0]
+
         line = h_line_dens[r]
         pre_mono = n_span_mean(cum_mono, max(0, r - 10), r) if r > 0 else mono_row[0]
         post_mono = n_span_mean(cum_mono, r, min(h, r + 20))
 
         mono_drop = max(0.0, pre_mono - post_mono)
-        is_outer_trans = (pre_std < 1.5 and post_std > 2.5 and r >= 35)
+        is_outer_trans = (local_pre_std < 5.0 and post_std > 10.0 and r >= 35)
 
         if line < 0.05 and mono_drop < 0.12 and not is_outer_trans:
             continue
         if r < 30 and line < 0.25 and post_mono > 0.70:
             continue
-        if r < 150 and line < 0.30 and mono_drop < 0.12 and n_span_mean(cum_mono, r, min(h, r + 30)) > 0.70:
+        if r < 150 and line < 0.30 and mono_drop < 0.12 and not is_outer_trans and n_span_mean(cum_mono, r, min(h, r + 30)) > 0.70:
             continue
 
         if top_y > 0 and best_top_line > 0.30 and n_span_mean(cum_mono, max(0, top_y - 10), top_y) > 0.85 and gray_mean_row[min(h - 1, top_y + 5)] > 70.0 and r > top_y + 15:
@@ -122,7 +133,7 @@ def numba_scan_top_boundary(
             if line < 0.35 and best_top_score > 0 and top_y >= 35 and n_span_mean(cum_std, top_y, r) > 3.5:
                 continue
 
-            score = mono_drop * 10.0 + line * 300.0 + (post_std - pre_std) * 0.5
+            score = mono_drop * 10.0 + line * 300.0 + (post_std - local_pre_std) * 0.5
             if is_outer_trans:
                 score += 15.0
 
@@ -209,6 +220,13 @@ def refine_cell_y_v7(img: np.ndarray, cell_x: int, cell_w: int, default_top: int
     best_line = 0.0
 
     for r in range(1, int(h * 0.35)):
+        # Above-texture internal horizon rejection:
+        if r >= 60:
+            above_std = span_mean(cum_std, max(0, r - 30), max(0, r - 5))
+            above_mean = span_mean(cum_mean, max(0, r - 30), max(0, r - 5))
+            if above_std > 18.0 and above_mean > 18.0:
+                continue
+
         pre_std = span_mean(cum_std, 0, r) if r > 0 else row_stds[0]
         post_std = span_mean(cum_std, r, min(h, r + 20))
         line = h_line_dens[r]
@@ -412,8 +430,9 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
                 right_x = c + 1
 
     # 3. TOP BOUNDARY (Accelerated by Numba JIT)
+    cum_row_means = make_cum(row_means)
     top_y, best_top_score, best_top_line = numba_scan_top_boundary(
-        h, row_stds, row_means, mono_row, h_line_dens, h_line_dens_25, row_means, cum_row_stds, cum_mono_row
+        h, row_stds, row_means, mono_row, h_line_dens, h_line_dens_25, row_means, cum_row_stds, cum_mono_row, cum_row_means
     )
 
     # Refine top_y with Gradient Sign Coherence candidate if available
@@ -494,8 +513,8 @@ def detect_camera_rois_v7(img: np.ndarray, use_downsample: bool = False, target_
         left_act = float(gray[l_top_y:l_top_y+l_h, left_x:640].std())
         right_act = float(gray[r_top_y:r_top_y+r_h, 640:right_x].std())
 
-        # 1. Enforce shared top boundary across dual cameras when both are active or difference is minor (<=25px)
-        if abs(l_top_y - r_top_y) <= 25 or (left_act > 15.0 and right_act > 15.0):
+        # 1. Enforce shared top boundary across dual cameras when both/either active or difference is <=50px
+        if abs(l_top_y - r_top_y) <= 50 or (left_act > 10.0 or right_act > 10.0):
             shared_top = min(l_top_y, r_top_y)
             l_top_y = shared_top
             r_top_y = shared_top
@@ -600,7 +619,7 @@ def warm_up_v7():
     dummy_sobel = np.zeros((100, 100), dtype=np.float64)
     cum_std = np.pad(np.cumsum(dummy_sobel), (1, 0))
     cum_mono = np.pad(np.cumsum(dummy_mono), (1, 0))
-    numba_scan_top_boundary(100, dummy_sobel[:, 0], dummy_sobel[:, 0], dummy_mono[:, 0], dummy_sobel[:, 0], dummy_sobel[:, 0], dummy_sobel[:, 0], cum_std, cum_mono)
+    numba_scan_top_boundary(100, dummy_sobel[:, 0], dummy_sobel[:, 0], dummy_mono[:, 0], dummy_sobel[:, 0], dummy_sobel[:, 0], dummy_sobel[:, 0], cum_std, cum_mono, cum_std)
 
 
 if __name__ == "__main__":

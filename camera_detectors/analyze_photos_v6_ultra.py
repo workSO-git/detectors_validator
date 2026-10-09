@@ -123,6 +123,13 @@ def refine_cell_y_v6(img: np.ndarray, cell_x: int, cell_w: int, default_top: int
     best_line = 0.0
 
     for r in range(1, int(h * 0.35)):
+        # Above-texture internal horizon rejection:
+        if r >= 60:
+            above_std = span_mean(cum_std, max(0, r - 30), max(0, r - 5))
+            above_mean = span_mean(cum_mean, max(0, r - 30), max(0, r - 5))
+            if above_std > 18.0 and above_mean > 18.0:
+                continue
+
         pre_std = span_mean(cum_std, 0, r) if r > 0 else row_stds[0]
         post_std = span_mean(cum_std, r, min(h, r + 20))
         line = h_line_dens[r]
@@ -364,15 +371,25 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
     best_top_score = -1.0
     best_top_line = 0.0
 
+    cum_row_means = make_cum(row_means)
     for r in range(1, int(h * 0.35)):
+        # Above-texture internal horizon rejection:
+        if r >= 60:
+            above_std = span_mean(cum_row_stds, max(0, r - 30), max(0, r - 5))
+            above_mean = span_mean(cum_row_means, max(0, r - 30), max(0, r - 5))
+            if above_std > 18.0 and above_mean > 18.0:
+                continue
+
         pre_std = span_mean(cum_row_stds, 0, r) if r > 0 else row_stds[0]
         post_std = span_mean(cum_row_stds, r, min(h, r+20))
+        local_pre_std = span_mean(cum_row_stds, max(0, r - 15), r) if r > 0 else row_stds[0]
+
         line = h_line_dens[r]
         pre_mono = span_mean(cum_mono_row, max(0, r-10), r) if r > 0 else mono_row[0]
         post_mono = span_mean(cum_mono_row, r, min(h, r+20))
 
         mono_drop = max(0.0, pre_mono - post_mono)
-        is_outer_trans = (pre_std < 1.5 and post_std > 2.5 and r >= 35)
+        is_outer_trans = (local_pre_std < 5.0 and post_std > 10.0 and r >= 35)
 
         # Reject top candidates in top toolbar region r < 45 if there is no continuous horizontal frame line
         if r < 45 and h_line_cov[r] < 0.25 and not is_outer_trans:
@@ -382,7 +399,7 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
             continue
         if r < 30 and line < 0.25 and post_mono > 0.70:
             continue
-        if r < 150 and line < 0.30 and mono_drop < 0.12 and span_mean(cum_mono_row, r, min(h, r+30)) > 0.70:
+        if r < 150 and line < 0.30 and mono_drop < 0.12 and not is_outer_trans and span_mean(cum_mono_row, r, min(h, r+30)) > 0.70:
             continue
 
         if top_y > 0 and best_top_line > 0.30 and span_mean(cum_mono_row, max(0, top_y - 10), top_y) > 0.85 and gray[min(h-1, top_y+5), :].mean() > 70.0 and r > top_y + 15:
@@ -399,7 +416,7 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
             if line < 0.35 and best_top_score > 0 and top_y >= 35 and span_mean(cum_row_stds, top_y, r) > 3.5:
                 continue
 
-            score = mono_drop * 10.0 + line * 300.0 + (post_std - pre_std) * 0.5
+            score = mono_drop * 10.0 + line * 300.0 + (post_std - local_pre_std) * 0.5
             if is_outer_trans:
                 score += 15.0
 
@@ -480,11 +497,35 @@ def detect_camera_rois_v6_ultra(img: np.ndarray) -> List[CameraRegion]:
         l_top_y, l_h = refine_cell_y_v6(img, left_x, 640 - left_x, default_top=top_y, default_bot=bot_y, pre_gray=gray, pre_sobel_y=sobel_y, pre_mono_m=mono_m)
         r_top_y, r_h = refine_cell_y_v6(img, 640, right_x - 640, default_top=top_y, default_bot=bot_y, pre_gray=gray, pre_sobel_y=sobel_y, pre_mono_m=mono_m)
 
+        l_bot_y = l_top_y + l_h
+        r_bot_y = r_top_y + r_h
+
         left_crop = gray[l_top_y:l_top_y+l_h, left_x:640]
         right_crop = gray[r_top_y:r_top_y+r_h, 640:right_x]
 
         left_act = get_cell_activity(left_crop)
         right_act = get_cell_activity(right_crop)
+
+        # 1. Enforce shared top boundary across dual cameras when both/either active or difference is <=50px
+        if abs(l_top_y - r_top_y) <= 50 or (left_act > 10.0 or right_act > 10.0):
+            shared_top = min(l_top_y, r_top_y)
+            l_top_y = shared_top
+            r_top_y = shared_top
+
+        # 2. Enforce shared bottom if one camera drifted to image bottom (h) or difference is minor (<=15px)
+        if abs(l_bot_y - r_bot_y) <= 15:
+            shared_bot = min(l_bot_y, r_bot_y)
+            l_h = shared_bot - l_top_y
+            r_h = shared_bot - r_top_y
+        elif l_bot_y >= h - 5 and r_bot_y < h - 20:
+            l_h = r_bot_y - l_top_y
+            r_h = r_bot_y - r_top_y
+        elif r_bot_y >= h - 5 and l_bot_y < h - 20:
+            l_h = l_bot_y - l_top_y
+            r_h = l_bot_y - r_top_y
+        else:
+            l_h = l_bot_y - l_top_y
+            r_h = r_bot_y - r_top_y
 
         cell_left = CameraRegion(x=left_x, y=l_top_y, w=640-left_x, h=l_h, area=(640-left_x)*l_h, activity=left_act, center_x=(left_x+640)/2.0, center_y=l_top_y+l_h/2.0, rank=1)
         cell_right = CameraRegion(x=640, y=r_top_y, w=right_x-640, h=r_h, area=(right_x-640)*r_h, activity=right_act, center_x=(640+right_x)/2.0, center_y=r_top_y+r_h/2.0, rank=2)
